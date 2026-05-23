@@ -1357,6 +1357,197 @@ def case_create(name, chain):
     })
 
 
+@cli.command("label")
+@click.argument("address")
+@click.option("--role", "-r", help="Role: victim, attacker, collector, funder, exchange, mixer, bridge, intermediate")
+@click.option("--name", "-n", help="Label name (e.g. 'Binance 14', 'Tornado Cash')")
+@click.option("--confidence", default="HIGH", help="Confidence: CONFIRMED, HIGH, MEDIUM, LOW")
+@click.option("--note", help="Free-text note about this address")
+@click.option("--source", "-s", help="Intel source (e.g. 'Arkham', 'Nansen', 'manual')")
+@click.option("--case", help="Case name")
+@click.option("--chain", "-c", help="Chain name")
+def label(address, role, name, confidence, note, source, case, chain):
+    """Add or update a label for an address in a case."""
+    from meat.case import Case
+
+    config = get_config()
+    case_name = _resolve_case(case)
+    if not case_name:
+        _error("--case is required (or set MEAT_CASE env var)")
+
+    c = Case.load(config.cases_dir, case_name)
+    if not c:
+        _error(f"Case '{case_name}' not found")
+
+    addr_file = c.case_dir / "addresses.json"
+    addresses = {}
+    if addr_file.exists():
+        try:
+            addresses = json.loads(addr_file.read_text())
+        except json.JSONDecodeError:
+            pass
+
+    existing = addresses.get(address) or addresses.get(address.lower()) or {}
+    addr_key = address
+
+    for k in list(addresses.keys()):
+        if k.lower() == address.lower():
+            addr_key = k
+            existing = addresses[k]
+            break
+
+    if role:
+        existing["role"] = role
+    if name:
+        existing.setdefault("classify", {})
+        existing["classify"]["known_entity"] = name
+        if "labels" not in existing:
+            existing["labels"] = []
+        if name not in existing["labels"]:
+            existing["labels"].append(name)
+    if confidence:
+        existing["confidence"] = confidence
+    if note:
+        existing["reason"] = note
+    if source:
+        existing["source"] = source
+
+    existing.setdefault("role", "unknown")
+    existing.setdefault("confidence", "MEDIUM")
+
+    from datetime import datetime, timezone
+    existing["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+    addresses[addr_key] = existing
+    addr_file.write_text(json.dumps(addresses, indent=2))
+
+    c.append_journal(f"Label: {address[:16]}... → role={existing.get('role')}, name={name or '—'}, source={source or '—'}")
+
+    _output({
+        "labeled": True,
+        "address": addr_key,
+        "role": existing.get("role"),
+        "name": name,
+        "confidence": existing.get("confidence"),
+        "note": note,
+        "source": source,
+    })
+
+
+@cli.command("funder")
+@click.argument("addresses", nargs=-1, required=True)
+@click.option("--chain", "-c", help="Chain name")
+@click.option("--case", help="Case name for evidence storage")
+def funder(addresses, chain, case):
+    """Find the first gas funding source for one or more addresses."""
+    chain_cfg = _get_chain_config(chain)
+    rpc = _get_rpc(chain_cfg)
+    if not rpc or not rpc.is_alchemy:
+        _error("funder command requires Alchemy RPC")
+
+    meta = Meta()
+    meta.data_sources.append("alchemy_getAssetTransfers")
+    evidence = _get_evidence(case)
+
+    results = []
+    clusters = {}
+
+    for addr in addresses:
+        addr = addr.strip().lower()
+        try:
+            data = rpc.alchemy_get_asset_transfers(
+                to_address=addr,
+                category=["external"],
+                max_count="0x1",
+                order="asc",
+                with_metadata=True,
+            )
+        except Exception as e:
+            results.append({"address": addr, "error": str(e)})
+            continue
+
+        transfers = (data or {}).get("transfers", [])
+        if not transfers:
+            results.append({"address": addr, "funder": None, "note": "no inbound native transfers found"})
+            continue
+
+        t = transfers[0]
+        funder_addr = (t.get("from") or "").lower()
+        raw_val = t.get("rawContract", {}).get("value", "0x0")
+        try:
+            value_wei = int(raw_val, 16) if raw_val.startswith("0x") else int(raw_val or 0)
+        except (ValueError, TypeError):
+            value_wei = 0
+        value_formatted = f"{value_wei / 1e18:.6f} {chain_cfg.native_token}"
+
+        ts = t.get("metadata", {}).get("blockTimestamp", "")
+        block_hex = t.get("blockNum", "0x0")
+        try:
+            block = int(block_hex, 16)
+        except (ValueError, TypeError):
+            block = 0
+
+        entry = {
+            "address": addr,
+            "funder": funder_addr,
+            "value": str(value_wei),
+            "value_formatted": value_formatted,
+            "tx_hash": t.get("hash", ""),
+            "block": block,
+            "timestamp": ts,
+        }
+        results.append(entry)
+
+        if funder_addr not in clusters:
+            clusters[funder_addr] = []
+        clusters[funder_addr].append(addr)
+
+    cluster_list = []
+    for funder_addr, funded in clusters.items():
+        cluster_list.append({
+            "funder": funder_addr,
+            "funded_addresses": funded,
+            "count": len(funded),
+        })
+    cluster_list.sort(key=lambda c: -c["count"])
+
+    output = {
+        "chain": chain_cfg.name,
+        "queried": len(addresses),
+        "results": results,
+        "clusters": cluster_list,
+        "_meta": meta.to_dict(),
+    }
+
+    if evidence:
+        evidence.save("funder", "cluster_analysis", output, chain_cfg.name)
+
+    _output(output)
+
+
+@cli.command("report")
+@click.argument("case_name")
+@click.option("-o", "--output", default=None, help="Output HTML file path")
+def report(case_name, output):
+    """Generate HTML report for a case."""
+    from pathlib import Path
+    from meat.report import generate_report
+    from meat.case import Case
+
+    config = get_config()
+    case = Case.load(config.cases_dir, case_name)
+    if not case:
+        _error(f"Case '{case_name}' not found")
+
+    output_path = Path(output) if output else None
+    result = generate_report(case.case_dir, output_path)
+    _output({
+        "generated": True,
+        "case": case_name,
+        "output": str(result),
+    })
+
+
 def _hex_to_int(val) -> int | None:
     if val is None:
         return None
