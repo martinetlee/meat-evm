@@ -1,0 +1,62 @@
+# CLAUDE.md — MEAT-EVM
+
+## What this is
+EVM exploit analysis toolkit. Python CLI for data fetching/decoding + Claude skills for analysis/reasoning.
+
+## Quick start
+```
+source .venv/bin/activate
+cp .env.example .env  # add your RPC URLs and explorer API keys
+pip install -r requirements.txt
+```
+
+## Skills
+| Skill | Purpose |
+|-------|---------|
+| `/meat <input>` | Analyze a tx, address, or URL. Main entry point. |
+| `/meat-recon` | Expand from partial info to full picture |
+| `/meat-trace` | Track where stolen funds went |
+| `/meat-analyze` | Deep-dive into the vulnerability |
+| `/meat-poc` | Create a Foundry PoC reproduction |
+| `/meat-monitor` | Watch active cases for new activity |
+
+## CLI tool
+```
+source .venv/bin/activate
+python3 -m meat <command> [options]
+```
+
+Commands: `parse`, `tx`, `source`, `abi`, `classify`, `decode`
+
+Phase 2 commands: `txlist`, `transfers`, `flow`
+Phase 3 commands: `trace`, `storage`, `logs`, `block`
+
+## Case directory
+Each analysis writes to `cases/<case-name>/`. Evidence (raw on-chain data) in `evidence/`, analysis in `findings/`.
+
+On-chain data is immutable — evidence files are write-once, never modified.
+
+## Chains
+Configured in `chains.yaml`. Uses Etherscan V2 API (`chainid` parameter). RPC URLs and API keys come from `.env`.
+
+## Enhanced providers
+- **Alchemy RPC** — auto-detected from URL. Enables: `alchemy_getAssetTransfers` (faster fund tracing), `alchemy_getTokenBalances` (full token balance snapshot), `debug_traceTransaction` (call traces).
+- **Tenderly** — optional. Set `TENDERLY_ACCESS_KEY`, `TENDERLY_ACCOUNT`, `TENDERLY_PROJECT` in `.env`. Enables decoded call traces as fallback.
+- **DeFiLlama** — free, no config. Auto-fetches USD prices for token transfers in net_flows.
+- **Sourcify** — free, no config. Fallback for contract verification and function signature lookup (4.7M signatures).
+
+## Dependencies
+Python: requests, eth-abi, eth-utils, eth-hash[pycryptodome], click, pyyaml, python-dotenv
+
+System (optional): cast, forge (Foundry) for PoC reproduction
+
+## Architecture
+- `meat/cli.py` — Click CLI entry point, all commands output JSON to stdout
+- `meat/config.py` — Loads chains.yaml + .env
+- `meat/rpc.py` — JSON-RPC client
+- `meat/explorer.py` — Etherscan V2 API client with rate limiter
+- `meat/decode.py` — ABI decoding, 4byte selector lookup
+- `meat/evidence.py` — Write-once evidence store
+- `meat/case.py` — Case lifecycle (case.json, journal.md, addresses.json)
+- `meat/classify.py` — Address classification (EOA/contract/token/proxy)
+- `meat/parse.py` — Input parser (tx hash, address, URL, batch)

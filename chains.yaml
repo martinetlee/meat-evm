@@ -1,0 +1,75 @@
+chains:
+  ethereum:
+    chain_id: 1
+    rpc_env: ETH_RPC_URL
+    explorer_api_env: ETHERSCAN_API_KEY
+    explorer_base: "https://api.etherscan.io/v2/api"
+    explorer_url: "https://etherscan.io"
+    native_token: ETH
+    url_patterns:
+      - "etherscan.io"
+    trace_method: debug_traceTransaction
+    trace_fallback: cast_run
+
+  polygon:
+    chain_id: 137
+    rpc_env: POLYGON_RPC_URL
+    explorer_api_env: POLYGONSCAN_API_KEY
+    explorer_base: "https://api.etherscan.io/v2/api"
+    explorer_url: "https://polygonscan.com"
+    native_token: MATIC
+    url_patterns:
+      - "polygonscan.com"
+    trace_method: debug_traceTransaction
+    trace_fallback: cast_run
+
+  base:
+    chain_id: 8453
+    rpc_env: BASE_RPC_URL
+    explorer_api_env: BASESCAN_API_KEY
+    explorer_base: "https://api.etherscan.io/v2/api"
+    explorer_url: "https://basescan.org"
+    native_token: ETH
+    url_patterns:
+      - "basescan.org"
+    trace_method: debug_traceTransaction
+    trace_fallback: cast_run
+
+  arbitrum:
+    chain_id: 42161
+    rpc_env: ARBITRUM_RPC_URL
+    explorer_api_env: ARBISCAN_API_KEY
+    explorer_base: "https://api.etherscan.io/v2/api"
+    explorer_url: "https://arbiscan.io"
+    native_token: ETH
+    url_patterns:
+      - "arbiscan.io"
+    trace_method: debug_traceTransaction
+    trace_fallback: cast_run
+
+  bsc:
+    chain_id: 56
+    rpc_env: BSC_RPC_URL
+    explorer_api_env: BSCSCAN_API_KEY
+    explorer_base: "https://api.etherscan.io/v2/api"
+    explorer_url: "https://bscscan.com"
+    native_token: BNB
+    url_patterns:
+      - "bscscan.com"
+    trace_method: debug_traceTransaction
+    trace_fallback: cast_run
+
+  optimism:
+    chain_id: 10
+    rpc_env: OPTIMISM_RPC_URL
+    explorer_api_env: OPTIMISTIC_ETHERSCAN_API_KEY
+    explorer_base: "https://api.etherscan.io/v2/api"
+    explorer_url: "https://optimistic.etherscan.io"
+    native_token: ETH
+    url_patterns:
+      - "optimistic.etherscan.io"
+    trace_method: debug_traceTransaction
+    trace_fallback: cast_run
+
+rate_limit:
+  requests_per_second: 3

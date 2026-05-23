@@ -1,0 +1,56 @@
+{
+  "_meta": {
+    "description": "Known address labels for fund tracing classification",
+    "last_updated": "2024-03-15"
+  },
+  "cex": {
+    "0x28c6c06298d514db089934071355e5743bf21d60": "Binance 14",
+    "0x21a31ee1afc51d94c2efccaa2092ad1028285549": "Binance 15",
+    "0xdfd5293d8e347dfe59e90efd55b2956a1343963d": "Binance 16",
+    "0x56eddb7aa87536c09ccc2793473599fd21a8b17f": "Binance 17",
+    "0xa9d1e08c7793af67e9d92fe308d5697fb81d3e43": "Coinbase 10",
+    "0x503828976d22510aad0201ac7ec88293211d23da": "Coinbase 2",
+    "0xf977814e90da44bfa03b6295a0616a897441acec": "Binance 8",
+    "0x3f5ce5fbfe3e9af3971dd833d26ba9b5c936f0be": "Binance 1 (old)",
+    "0x71660c4005ba85c37ccec55d0c4493e66fe775d3": "Coinbase 1",
+    "0x2910543af39aba0cd09dbb2d50200b3e800a63d2": "Kraken 13",
+    "0x267be1c1d684f78cb4f6a176c4911b741e4ffdc0": "Kraken 4",
+    "0xfa52274dd61e1643d2205169732f29114bc240b3": "OKX 2",
+    "0x6cc5f688a315f3dc28a7781717a9a798a59fda7b": "OKX 3",
+    "0x46340b20830761efd32832a74d7169b29feb9758": "Crypto.com 2",
+    "0x6262998ced04146fa42253a5c0af90ca02dfd2a3": "Crypto.com 1"
+  },
+  "bridges": {
+    "0x3ee18b2214aff97000d974cf647e7c347e8fa585": "Wormhole: Portal",
+    "0x99c9fc46f92e8a1c0dec1b1747d010903e884be1": "Optimism: Gateway",
+    "0x4dbd4fc535ac27206064b68ffcf827b0a60bab3f": "Arbitrum: Inbox",
+    "0x3154cf16ccdb4c6d922629664174b904d80f2c35": "Base: Portal",
+    "0x40ec5b33f54e0e8a33a975908c5ba1c14e5bbbdf": "Polygon: ERC20 Bridge",
+    "0xa0c68c638235ee32657e8f720a23cec1bfc6c9a8": "Polygon: zkEVM Bridge",
+    "0xe4edb277e41dc89ab076a1f049f4a3efa700bce8": "Across Protocol",
+    "0xd19d4b5d358258f05d7b411e21a1460d11b0876f": "Hop Protocol: ETH Bridge",
+    "0x8731d54e9d02c286767d56ac03e8037c07e01e98": "Stargate: Router"
+  },
+  "mixers": {
+    "0xd90e2f925da726b50c4ed8d0fb90ad053324f31b": "Tornado Cash: Router",
+    "0x47ce0c6ed5b0ce3d3a51fdb1c52dc66a7c3c2936": "Tornado Cash: 0.1 ETH",
+    "0x910cbd523d972eb0a6f4cae4618ad62622b39dbf": "Tornado Cash: 10 ETH",
+    "0xa160cdab225685da1d56aa342ad8841c3b53f291": "Tornado Cash: 100 ETH",
+    "0xba214c1c1928a32bffe790263e38b4af9bfcd659": "Railgun: Relay"
+  },
+  "dex_routers": {
+    "0x7a250d5630b4cf539739df2c5dacb4c659f2488d": "Uniswap V2: Router",
+    "0xe592427a0aece92de3edee1f18e0157c05861564": "Uniswap V3: Router",
+    "0x68b3465833fb72a70ecdf485e0e4c7bd8665fc45": "Uniswap V3: Router 02",
+    "0x3fc91a3afd70395cd496c647d5a6cc9d4b2b7fad": "Uniswap: Universal Router",
+    "0xdef1c0ded9bec7f1a1670819833240f027b25eff": "0x: Exchange Proxy",
+    "0x1111111254eeb25477b68fb85ed929f73a960582": "1inch V5: Router",
+    "0x6131b5fae19ea4f9d964eac0408e4408b66337b5": "Kyber: MetaAggregator Router"
+  },
+  "lending": {
+    "0x87870bca3f3fd6335c3f4ce8392d69350b4fa4e2": "Aave V3: Pool",
+    "0x7d2768de32b0b80b7a3454c06bdac94a69ddc7a9": "Aave V2: Pool",
+    "0x3d9819210a31b4961b30ef54be2aed79b9c9cd3b": "Compound: Comptroller",
+    "0x5ba1e12693dc8f9c48aad8770482f4739beed696": "MakerDAO: Multicall"
+  }
+}
