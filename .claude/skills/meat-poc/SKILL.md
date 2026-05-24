@@ -102,9 +102,23 @@ Iterate up to 3 times if it fails. Read the error output carefully — common is
 
 Write `cases/<case>/findings/poc.md` with run instructions and test output.
 
+## Evidence Checklist
+
+Ensure these exist BEFORE writing the PoC (from earlier `/meat-analyze`):
+
+| Evidence | Source | Location |
+|----------|--------|----------|
+| Call trace | `meat calltrace <hash>` | `evidence/trace/<hash>.json` |
+| Source code | `meat source <addr>` | `evidence/source/<addr>.json` |
+| Analysis | `/meat-analyze` | `findings/analysis.md` |
+| Attack tx | `meat tx <hash>` | `evidence/tx/<hash>.json` |
+
+The PoC itself is saved to `foundry/test/` and documented in `findings/poc.md`.
+
 ## CORRECTNESS RULES
 
 1. **The test must pass.** A failing PoC is not a PoC.
 2. **Fork at block N-1.** Pre-attack state.
 3. **Assert profit > 0**, not exact amounts (state may vary slightly).
 4. **Use minimal interfaces.** Only define functions you actually call.
+5. **Verify `MEAT_CASE` is set** when running calltrace/storage commands to save evidence.

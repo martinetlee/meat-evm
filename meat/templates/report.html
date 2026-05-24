@@ -117,6 +117,21 @@ tr:hover td { background: var(--surface2); }
 .flow-controls button { background: var(--surface2); border: 1px solid var(--border); color: var(--text); padding: 4px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; }
 .flow-controls button:hover { background: var(--border); }
 
+/* Sequence diagram */
+.seq-diagram { overflow-x: auto; margin-bottom: 20px; }
+.seq-header { display: flex; position: sticky; top: 0; z-index: 2; background: var(--bg); padding-bottom: 4px; border-bottom: 1px solid var(--border); }
+.seq-col-header { flex: 0 0 auto; text-align: center; padding: 8px 4px; font-size: 11px; font-weight: 600; border-radius: 6px; margin: 0 2px; min-width: 90px; }
+.seq-body { position: relative; }
+.seq-lifelines { position: absolute; top: 0; left: 0; right: 0; bottom: 0; display: flex; pointer-events: none; }
+.seq-lifeline { flex: 0 0 auto; min-width: 90px; margin: 0 2px; display: flex; justify-content: center; }
+.seq-lifeline-bar { width: 2px; background: var(--border); }
+.seq-step { position: relative; display: flex; align-items: center; min-height: 44px; padding: 4px 0; }
+.seq-arrow { position: absolute; height: 2px; top: 50%; display: flex; align-items: center; }
+.seq-arrow-line { flex: 1; height: 2px; }
+.seq-arrow-head { width: 0; height: 0; border-top: 5px solid transparent; border-bottom: 5px solid transparent; }
+.seq-arrow-label { position: absolute; top: -16px; white-space: nowrap; font-size: 10px; font-family: var(--font-mono); padding: 1px 4px; background: var(--bg); border-radius: 2px; }
+.seq-step-num { position: absolute; left: 4px; font-size: 10px; color: var(--text-dim); font-weight: 600; }
+
 /* Timeline */
 .timeline { position: relative; padding-left: 24px; }
 .timeline::before { content: ''; position: absolute; left: 8px; top: 0; bottom: 0; width: 2px; background: var(--border); }
@@ -305,22 +320,61 @@ function syntaxHighlight(json) {
     .replace(/\bnull\b/g, '<span class="json-null">null</span>');
 }
 
-function simpleMarkdown(md) {
+function simpleMarkdown(md) { return renderMarkdown(md); }
+
+function renderMarkdown(md) {
   if (!md) return '';
-  return md
-    .replace(/^### (.+)$/gm, '<h3>$1</h3>')
-    .replace(/^## (.+)$/gm, '<h2>$1</h2>')
-    .replace(/^# (.+)$/gm, '<h1>$1</h1>')
-    .replace(/```([^`]*)```/gs, '<pre><code>$1</code></pre>')
-    .replace(/`([^`]+)`/g, '<code>$1</code>')
-    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-    .replace(/\n\n/g, '<br><br>')
-    .replace(/^\|(.+)\|$/gm, (match) => {
-      const cells = match.split('|').filter(c => c.trim());
-      if (cells.every(c => /^[\s-:]+$/.test(c))) return '';
-      const tag = 'td';
-      return '<tr>' + cells.map(c => `<${tag}>${c.trim()}</${tag}>`).join('') + '</tr>';
+  let html = md;
+
+  // Code blocks (fenced)
+  html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
+    const escaped = code.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    return `<pre><code class="lang-${lang||'text'}">${escaped}</code></pre>`;
+  });
+
+  // Tables
+  html = html.replace(/((?:^\|.+\|$\n?)+)/gm, (block) => {
+    const rows = block.trim().split('\n').filter(r => r.trim());
+    if (rows.length < 2) return block;
+    let tableHtml = '<table>';
+    rows.forEach((row, i) => {
+      const cells = row.split('|').filter(c => c !== '');
+      if (!cells.length) return;
+      if (cells.every(c => /^[\s\-:]+$/.test(c.trim()))) return;
+      const tag = i === 0 ? 'th' : 'td';
+      const rowTag = i === 0 ? 'thead' : (i === 1 ? 'tbody' : '');
+      let prefix = rowTag === 'thead' ? '<thead>' : (rowTag === 'tbody' ? '<tbody>' : '');
+      let suffix = rowTag === 'thead' ? '</thead>' : '';
+      tableHtml += `${prefix}<tr>${cells.map(c => `<${tag}>${c.trim()}</${tag}>`).join('')}</tr>${suffix}`;
     });
+    tableHtml += '</tbody></table>';
+    return tableHtml;
+  });
+
+  // Headers
+  html = html.replace(/^#### (.+)$/gm, '<h4>$1</h4>');
+  html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
+  html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
+  html = html.replace(/^# (.+)$/gm, '<h1>$1</h1>');
+
+  // Inline formatting
+  html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+  html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+
+  // Lists
+  html = html.replace(/^- (.+)$/gm, '<li>$1</li>');
+  html = html.replace(/(<li>.*<\/li>\n?)+/g, (match) => `<ul>${match}</ul>`);
+  html = html.replace(/^\d+\. (.+)$/gm, '<li>$1</li>');
+
+  // Paragraphs
+  html = html.replace(/\n\n/g, '</p><p>');
+  html = '<p>' + html + '</p>';
+  html = html.replace(/<p>\s*(<h[1-4]|<pre|<table|<ul|<ol)/g, '$1');
+  html = html.replace(/(<\/h[1-4]>|<\/pre>|<\/table>|<\/ul>|<\/ol>)\s*<\/p>/g, '$1');
+  html = html.replace(/<p>\s*<\/p>/g, '');
+
+  return html;
 }
 
 function sortTable(table, colIdx, type) {
@@ -377,6 +431,28 @@ hm.appendChild(badge(C.status, C.status === 'active' ? 'yellow' : 'green'));
   stats.appendChild((() => { const s = el('div', {class: 'stat-card'}); s.appendChild(el('div', {class: 'stat-label', text: 'Addresses'})); s.appendChild(el('div', {class: 'stat-value', text: String(Object.keys(D.addresses).length)})); return s; })());
   container.appendChild(stats);
 
+  // Exploit-type callout
+  const indicators = D.exploit_indicators[C.exploit_type];
+  if (indicators) {
+    const callout = el('div', {class: 'callout callout-red'});
+    callout.appendChild(el('div', {class: 'callout-title', text: exploitLabel(C.exploit_type) + ' Indicators'}));
+    const ul = el('ul', {style: 'padding-left: 18px; font-size: 13px;'});
+    Object.entries(indicators).forEach(([k, v]) => {
+      const label = k.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+      const val = typeof v === 'boolean' ? (v ? '✓' : '✗') : String(v);
+      ul.appendChild(el('li', {text: `${label}: ${val}`}));
+    });
+    callout.appendChild(ul);
+    container.appendChild(callout);
+  }
+
+  // Primary finding: analysis.md rendered as main content (NOT collapsible)
+  const analysisMd = (D.findings || {})['analysis'];
+  if (analysisMd) {
+    container.appendChild(el('div', {class: 'section-title', text: 'Attack Analysis'}));
+    container.appendChild(el('div', {class: 'card'}, [el('div', {class: 'findings-content', html: renderMarkdown(analysisMd)})]));
+  }
+
   // Stolen breakdown
   if (stolenEntries.length) {
     const card = el('div', {class: 'card'});
@@ -393,21 +469,6 @@ hm.appendChild(badge(C.status, C.status === 'active' ? 'yellow' : 'green'));
     tbl.appendChild(tbody);
     card.appendChild(el('div', {class: 'table-wrap'}, [tbl]));
     container.appendChild(card);
-  }
-
-  // Exploit-type callout
-  const indicators = D.exploit_indicators[C.exploit_type];
-  if (indicators) {
-    const callout = el('div', {class: 'callout callout-red'});
-    callout.appendChild(el('div', {class: 'callout-title', text: exploitLabel(C.exploit_type) + ' Indicators'}));
-    const ul = el('ul', {style: 'padding-left: 18px; font-size: 13px;'});
-    Object.entries(indicators).forEach(([k, v]) => {
-      const label = k.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-      const val = typeof v === 'boolean' ? (v ? '✓' : '✗') : String(v);
-      ul.appendChild(el('li', {text: `${label}: ${val}`}));
-    });
-    callout.appendChild(ul);
-    container.appendChild(callout);
   }
 
   // Actors table
@@ -441,12 +502,12 @@ hm.appendChild(badge(C.status, C.status === 'active' ? 'yellow' : 'green'));
     container.appendChild(card);
   }
 
-  // Findings (rendered markdown)
-  const findingsEntries = Object.entries(D.findings || {});
-  if (findingsEntries.length) {
-    findingsEntries.forEach(([name, md]) => {
+  // Other findings (recon, fund-trace, etc.) as collapsible
+  const otherFindings = Object.entries(D.findings || {}).filter(([name]) => name !== 'analysis');
+  if (otherFindings.length) {
+    otherFindings.forEach(([name, md]) => {
       container.appendChild(collapsible(`Finding: ${name}`, (body) => {
-        body.appendChild(el('div', {class: 'findings-content', html: simpleMarkdown(md)}));
+        body.appendChild(el('div', {class: 'findings-content', html: renderMarkdown(md)}));
       }));
     });
   }
@@ -1107,7 +1168,15 @@ hm.appendChild(badge(C.status, C.status === 'active' ? 'yellow' : 'green'));
   const container = $('#tab-technical');
   const analysis = D.analysis || {};
 
-  const hasData = analysis.call_trace || (analysis.source_files && analysis.source_files.length) || (analysis.storage_diffs && analysis.storage_diffs.length);
+  const hasVuln = analysis.vulnerability;
+  const hasTrace = analysis.call_trace;
+  const hasSource = analysis.source_files && analysis.source_files.length;
+  const hasDiffs = analysis.storage_diffs && analysis.storage_diffs.length;
+  const hasWalkthrough = analysis.attack_walkthrough && analysis.attack_walkthrough.length;
+  const hasContracts = analysis.contracts_involved && analysis.contracts_involved.length;
+  const hasFlashLoan = analysis.flash_loan;
+  const hasProfit = analysis.profit_breakdown;
+  const hasData = hasVuln || hasTrace || hasSource || hasDiffs || hasWalkthrough;
 
   if (!hasData) {
     const type = C.exploit_type;
@@ -1120,43 +1189,504 @@ hm.appendChild(badge(C.status, C.status === 'active' ? 'yellow' : 'green'));
     return;
   }
 
-  // Vulnerability info
-  if (analysis.vulnerability) {
+  // ── 1. Vulnerability card ──
+  if (hasVuln) {
     const v = analysis.vulnerability;
-    const callout = el('div', {class: 'callout callout-red'});
-    callout.appendChild(el('div', {class: 'callout-title', text: 'Vulnerability'}));
-    const grid = el('div', {style: 'display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 13px;'});
-    if (v.type) { grid.appendChild(el('span', {text: 'Type:', style: 'color: var(--text-dim);'})); grid.appendChild(el('span', {text: v.type})); }
-    if (v.severity) { grid.appendChild(el('span', {text: 'Severity:', style: 'color: var(--text-dim);'})); grid.appendChild(el('span', {text: v.severity})); }
-    if (v.root_cause) { grid.appendChild(el('span', {text: 'Root Cause:', style: 'color: var(--text-dim);'})); grid.appendChild(el('span', {text: v.root_cause})); }
-    if (v.confidence) { grid.appendChild(el('span', {text: 'Confidence:', style: 'color: var(--text-dim);'})); grid.appendChild(el('span', {text: v.confidence})); }
+    const callout = el('div', {class: 'callout callout-red', style: 'margin-bottom: 20px;'});
+    callout.appendChild(el('div', {class: 'callout-title', text: 'Vulnerability', style: 'font-size: 15px;'}));
+    const grid = el('div', {style: 'display: grid; grid-template-columns: auto 1fr; gap: 6px 16px; font-size: 13px;'});
+    const addField = (label, val, style) => { if (!val) return; grid.appendChild(el('span', {text: label, style: 'color: var(--text-dim); font-weight: 500;'})); grid.appendChild(el('span', {text: val, style: style || ''})); };
+    addField('Type:', v.type);
+    addField('Severity:', v.severity, v.severity?.toLowerCase() === 'critical' ? 'color: var(--red); font-weight: 600; text-transform: uppercase;' : '');
+    addField('Affected:', v.affected_contract);
+    addField('Root Cause:', v.root_cause, 'line-height: 1.5;');
+    addField('Confidence:', v.confidence);
     callout.appendChild(grid);
     container.appendChild(callout);
   }
 
-  // Call trace
-  if (analysis.call_trace) {
+  // ── 2. Flash loan lifecycle ──
+  if (hasFlashLoan) {
+    const flCard = el('div', {class: 'card', style: 'border-left: 3px solid var(--yellow); margin-bottom: 16px;'});
+    flCard.appendChild(el('div', {class: 'card-title', text: 'Flash Loan Lifecycle', style: 'color: var(--yellow);'}));
+    const flFlow = el('div', {style: 'display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; padding: 8px 0;'});
+    const arrow = () => el('span', {text: '→', style: 'color: var(--text-dim); font-size: 16px;'});
+    const step = (label, color) => { const s = el('div', {style: `padding: 6px 12px; background: ${color}22; border: 1px solid ${color}; border-radius: 6px; font-family: var(--font-mono); font-size: 12px;`}); s.textContent = label; return s; };
+    flFlow.appendChild(step('BORROW', '#e6a817'));
+    flFlow.appendChild(el('span', {text: analysis.flash_loan, style: 'font-size: 11px; color: var(--text-dim);'}));
+    flFlow.appendChild(arrow());
+    flFlow.appendChild(step('EXPLOIT', '#d94040'));
+    flFlow.appendChild(el('span', {text: 'manipulate prices + extract value', style: 'font-size: 11px; color: var(--text-dim);'}));
+    flFlow.appendChild(arrow());
+    flFlow.appendChild(step('REPAY', '#4caf50'));
+    flFlow.appendChild(el('span', {text: 'return borrowed amount + fee', style: 'font-size: 11px; color: var(--text-dim);'}));
+    flFlow.appendChild(arrow());
+    flFlow.appendChild(step('PROFIT', '#4fc3f7'));
+    flFlow.appendChild(el('span', {text: C.summary?.total_stolen_usd || '', style: 'font-size: 12px; font-weight: 600; color: var(--red);'}));
+    flCard.appendChild(flFlow);
+    container.appendChild(flCard);
+  }
+
+  // ── 3. Contract relationship map ──
+  if (hasContracts) {
+    container.appendChild(el('div', {class: 'section-title', text: 'Contracts Involved'}));
+    const ctbl = el('table');
+    ctbl.innerHTML = '<thead><tr><th>Address</th><th>Name</th><th>Role</th></tr></thead>';
+    const ctbody = el('tbody');
+    analysis.contracts_involved.forEach(c => {
+      const tr = el('tr');
+      const addr = c.address || '';
+      const tdAddr = el('td'); tdAddr.appendChild(addrEl(addr.replace(/`/g,''), explorerUrl)); tr.appendChild(tdAddr);
+      tr.appendChild(el('td', {text: c.name || '—'}));
+      const role = c.role || '';
+      const roleColor = role.toLowerCase().includes('attacker') ? 'var(--red)' : role.toLowerCase().includes('victim') ? 'var(--blue)' : 'var(--text-dim)';
+      tr.appendChild(el('td', {text: role, style: `color: ${roleColor};`}));
+      ctbody.appendChild(tr);
+    });
+    ctbl.appendChild(ctbody);
+    container.appendChild(el('div', {class: 'card'}, [el('div', {class: 'table-wrap'}, [ctbl])]));
+  }
+
+  // ── 4. Attack sequence diagram (from call trace) + walkthrough ──
+  const callSeq = analysis.call_sequence;
+  if (callSeq && callSeq.calls && callSeq.calls.length) {
+    container.appendChild(el('div', {class: 'section-title', text: 'Attack Sequence'}));
+
+    // Build ordered columns from contracts that appear in calls
+    const seenOrder = [];
+    const seenSet = new Set();
+    callSeq.calls.forEach(c => {
+      [c.from, c.to].forEach(addr => {
+        if (!seenSet.has(addr)) { seenSet.add(addr); seenOrder.push(addr); }
+      });
+    });
+
+    // Build column info with labels and protocol groups
+    const contracts = callSeq.contracts || {};
+    const protocols = callSeq.protocol_groups || {};
+    const colAddrs = seenOrder.filter(a => contracts[a]);
+    if (colAddrs.length < 2) colAddrs.push(...seenOrder.slice(0, 8));
+
+    // Limit columns to keep diagram readable
+    const MAX_COLS = 10;
+    const displayCols = colAddrs.slice(0, MAX_COLS);
+    const colIndex = {};
+    displayCols.forEach((a, i) => { colIndex[a] = i; });
+
+    const roleColorMap = {
+      attacker: '#d94040', collector: '#d94040',
+      victim: '#4a90d9',
+      intermediate: '#888', funder: '#e6a817',
+      exchange: '#4caf50',
+    };
+
+    const COL_W = Math.max(100, Math.min(140, 1100 / displayCols.length));
+    const totalW = displayCols.length * (COL_W + 4) + 30;
+
+    const diagram = el('div', {class: 'seq-diagram card', style: 'padding: 16px; overflow-x: auto;'});
+
+    // Protocol group headers — only show above actual member columns
+    const groupRow = el('div', {style: `display: flex; width: ${totalW}px; margin-bottom: 4px; padding-left: 26px;`});
+    displayCols.forEach((addr, i) => {
+      const proto = contracts[addr]?.protocol || '';
+      const protoColor = proto ? 'var(--accent)' : 'transparent';
+      const gDiv = el('div', {
+        text: proto || '',
+        style: `width: ${COL_W}px; margin: 0 2px; text-align: center; font-size: 9px; color: ${protoColor}; text-transform: uppercase; letter-spacing: 0.5px; ${proto ? 'border-bottom: 1px solid var(--accent);' : ''} padding-bottom: 2px;`,
+      });
+      groupRow.appendChild(gDiv);
+    });
+    diagram.appendChild(groupRow);
+
+    // Column headers with contract address + label
+    const headerRow = el('div', {class: 'seq-header', style: `width: ${totalW}px; padding-left: 26px;`});
+    displayCols.forEach(addr => {
+      const info = contracts[addr] || {};
+      const label = info.label || '';
+      const isUnlabeled = !label;
+      const color = isUnlabeled ? '#555' : (roleColorMap[info.role] || '#888');
+      const hdr = el('div', {
+        class: 'seq-col-header',
+        style: `width: ${COL_W}px; color: ${color}; border: 1px ${isUnlabeled ? 'dashed' : 'solid'} ${color}; background: ${color}15;`,
+      });
+      hdr.appendChild(el('div', {text: label || 'unidentified', style: `font-size: 11px; font-weight: 600; margin-bottom: 2px; ${isUnlabeled ? 'font-style: italic; opacity: 0.6;' : ''}`}));
+      const addrRow = el('div', {style: 'display: flex; align-items: center; justify-content: center; gap: 2px;'});
+      addrRow.appendChild(el('a', {href: `${explorerUrl}/address/${addr}`, target: '_blank', text: shortAddr(addr), title: addr, style: 'font-size: 9px; color: var(--text-dim); font-family: var(--font-mono);'}));
+      const copyBtn = el('button', {class: 'copy-btn', text: '⧉', title: 'Copy address', style: 'font-size: 9px;', onclick: (e) => {
+        e.stopPropagation();
+        navigator.clipboard.writeText(addr).then(() => { copyBtn.textContent = '✓'; copyBtn.classList.add('copied'); setTimeout(() => { copyBtn.textContent = '⧉'; copyBtn.classList.remove('copied'); }, 1500); });
+      }});
+      addrRow.appendChild(copyBtn);
+      hdr.appendChild(addrRow);
+      headerRow.appendChild(hdr);
+    });
+    diagram.appendChild(headerRow);
+
+    // Body with lifelines and arrows
+    const filteredCalls = callSeq.calls.filter(c =>
+      colIndex[c.from] !== undefined && colIndex[c.to] !== undefined && c.from !== c.to
+    );
+    const body = el('div', {class: 'seq-body', style: `width: ${totalW}px; min-height: ${Math.min(filteredCalls.length, 60) * 36}px;`});
+
+    // Lifelines
+    const lifelines = el('div', {class: 'seq-lifelines', style: 'padding-left: 26px;'});
+    displayCols.forEach(() => {
+      const ll = el('div', {class: 'seq-lifeline', style: `width: ${COL_W}px;`});
+      ll.appendChild(el('div', {class: 'seq-lifeline-bar'}));
+      lifelines.appendChild(ll);
+    });
+    body.appendChild(lifelines);
+
+    // Build annotation map from trace_annotations (keyed by call index in filtered list)
+    // Annotations reference trace paths; we match them to filtered call indices
+    const traceAnnotations = analysis.trace_annotations?.annotations || [];
+    const annotationAtIndex = {};
+
+    if (traceAnnotations.length) {
+      // Build path-to-filtered-index map by walking the trace
+      const allCalls = callSeq.calls || [];
+      const pathToAllIndex = {};
+      // The filtered calls are a subset of allCalls — map filtered index to all-calls index
+      const filteredToAll = [];
+      let fi = 0;
+      for (let ai = 0; ai < allCalls.length && fi < filteredCalls.length; ai++) {
+        if (allCalls[ai] === filteredCalls[fi]) {
+          filteredToAll.push(ai);
+          fi++;
+        }
+      }
+
+      traceAnnotations.forEach(ann => {
+        const path = ann.path || '';
+        // Find the call in allCalls that matches this path
+        // Path format: ".8.1.0" means root.calls[8].calls[1].calls[0]
+        // We match by finding the call at that path in the trace and finding its index in allCalls
+        // Simpler approach: match annotation to the filtered call closest to the described position
+        // by checking from/to/function if provided, or by sequential order
+        if (ann.call_index !== undefined) {
+          annotationAtIndex[ann.call_index] = ann;
+        } else if (ann.from && ann.to && ann.function) {
+          // Match by from+to+function
+          for (let i = 0; i < filteredCalls.length; i++) {
+            if (annotationAtIndex[i]) continue;
+            const fc = filteredCalls[i];
+            if (fc.from.startsWith(ann.from.toLowerCase()) &&
+                fc.to.startsWith(ann.to.toLowerCase()) &&
+                fc.function === ann.function) {
+              annotationAtIndex[i] = ann;
+              break;
+            }
+          }
+        }
+      });
+    }
+
+    // Render calls as arrows with trace annotations
+    filteredCalls.slice(0, 60).forEach((c, i) => {
+      // Insert annotation divider if this call has one
+      const ann = annotationAtIndex[i];
+      if (ann) {
+        const phaseColors = {setup: 'var(--text-dim)', manipulation: 'var(--red)', extraction: 'var(--yellow)', cashout: 'var(--green)'};
+        const color = phaseColors[ann.phase] || 'var(--yellow)';
+        const divider = el('div', {style: `position: relative; display: flex; align-items: center; padding: 6px 0; margin: 4px 0;`});
+        divider.appendChild(el('div', {style: `flex: 1; height: 1px; background: ${color}; opacity: 0.4;`}));
+        const badge = el('div', {style: `padding: 2px 10px; background: hsl(220,15%,14%); border: 1px solid ${color}; border-radius: 10px; font-size: 10px; color: ${color}; white-space: nowrap; margin: 0 8px;`});
+        badge.textContent = ann.title || '';
+        if (ann.purpose) badge.title = ann.purpose;
+        divider.appendChild(badge);
+        divider.appendChild(el('div', {style: `flex: 1; height: 1px; background: ${color}; opacity: 0.4;`}));
+        body.appendChild(divider);
+      }
+
+      const srcIdx = colIndex[c.from];
+      const tgtIdx = colIndex[c.to];
+      const leftIdx = Math.min(srcIdx, tgtIdx);
+      const rightIdx = Math.max(srcIdx, tgtIdx);
+      const goingRight = tgtIdx > srcIdx;
+      const leftPx = 26 + leftIdx * (COL_W + 4) + COL_W / 2;
+      const rightPx = 26 + rightIdx * (COL_W + 4) + COL_W / 2;
+      const arrowW = rightPx - leftPx;
+
+      const arrowColor = c.error ? '#d94040' :
+        c.function?.includes('flashLoan') || c.function?.includes('supply') ? '#e6a817' :
+        c.function?.includes('swap') || c.function?.includes('exactInput') ? '#4caf50' :
+        '#4fc3f7';
+
+      const stepRow = el('div', {class: 'seq-step', style: 'min-height: 32px;'});
+      stepRow.appendChild(el('div', {class: 'seq-step-num', text: String(i + 1)}));
+
+      const arrow = el('div', {class: 'seq-arrow', style: `left: ${leftPx}px; width: ${arrowW}px;`});
+      arrow.appendChild(el('div', {class: 'seq-arrow-line', style: `background: ${arrowColor};`}));
+      if (goingRight) {
+        arrow.appendChild(el('div', {class: 'seq-arrow-head', style: `border-left: 7px solid ${arrowColor};`}));
+      } else {
+        arrow.insertBefore(el('div', {class: 'seq-arrow-head', style: `border-right: 7px solid ${arrowColor};`}), arrow.firstChild);
+      }
+
+      const funcLabel = c.function || '';
+      const errSuffix = c.error ? ' REVERT' : '';
+      const label = el('div', {
+        class: 'seq-arrow-label',
+        text: funcLabel + errSuffix,
+        style: `left: ${arrowW / 2 - 30}px; color: ${arrowColor}; max-width: ${arrowW - 10}px; overflow: hidden; text-overflow: ellipsis;`,
+        title: `${contracts[c.from]?.label || shortAddr(c.from)} → ${contracts[c.to]?.label || shortAddr(c.to)}: ${funcLabel}`,
+      });
+      arrow.appendChild(label);
+      stepRow.appendChild(arrow);
+      body.appendChild(stepRow);
+    });
+
+    if (filteredCalls.length > 60) {
+      body.appendChild(el('div', {text: `... ${filteredCalls.length - 60} more calls`, style: 'text-align: center; color: var(--text-dim); font-size: 11px; padding: 8px;'}));
+    }
+
+    diagram.appendChild(body);
+    container.appendChild(diagram);
+  }
+
+  if (hasWalkthrough) {
+    container.appendChild(el('div', {class: 'section-title', text: 'Attack Walkthrough Details'}));
+    const walkDiv = el('div', {class: 'timeline'});
+    analysis.attack_walkthrough.forEach((step, i) => {
+      const entry = el('div', {class: 'timeline-entry'});
+      entry.appendChild(el('div', {text: step.title, style: 'font-weight: 600; font-size: 14px; margin-bottom: 4px;'}));
+      if (step.call) {
+        const callBadge = el('div', {style: 'font-family: var(--font-mono); font-size: 12px; background: var(--surface2); padding: 4px 8px; border-radius: 4px; margin-bottom: 4px; display: inline-block;'});
+        callBadge.textContent = step.call;
+        entry.appendChild(callBadge);
+      }
+      if (step.purpose) {
+        entry.appendChild(el('div', {text: step.purpose, style: 'font-size: 13px; color: var(--text-dim); margin-bottom: 4px;'}));
+      }
+      if (step.source) {
+        entry.appendChild(el('div', {html: `<span style="color:var(--text-dim)">Source:</span> <code style="font-size:11px">${step.source}</code>`, style: 'font-size: 12px; margin-bottom: 4px;'}));
+      }
+      if (step.usd_impact) {
+        entry.appendChild(el('div', {text: `Impact: ${step.usd_impact}`, style: 'font-size: 12px; color: var(--red); font-weight: 500;'}));
+      }
+      if (step.details && step.details.length) {
+        const detailsDiv = el('div', {style: 'font-size: 12px; color: var(--text-dim); margin-top: 4px;'});
+        step.details.forEach(d => {
+          if (d.startsWith('- ') || d.startsWith('* ')) {
+            detailsDiv.appendChild(el('div', {text: '  ' + d, style: 'padding-left: 8px;'}));
+          }
+        });
+        if (detailsDiv.children.length) entry.appendChild(detailsDiv);
+      }
+      walkDiv.appendChild(entry);
+    });
+    container.appendChild(walkDiv);
+  }
+
+  // ── 5. Profit breakdown ──
+  if (hasProfit && Object.keys(hasProfit).length) {
+    container.appendChild(el('div', {class: 'section-title', text: 'Profit Breakdown'}));
+    const profCard = el('div', {class: 'card'});
+    const profTbl = el('table');
+    profTbl.innerHTML = '<thead><tr><th>Address</th><th>Token</th><th>Net Flow</th></tr></thead>';
+    const profBody = el('tbody');
+    Object.entries(analysis.profit_breakdown).forEach(([addr, tokens]) => {
+      Object.entries(tokens).forEach(([tok, info]) => {
+        const tr = el('tr');
+        const tdA = el('td'); tdA.appendChild(addrEl(addr, explorerUrl)); tr.appendChild(tdA);
+        tr.appendChild(el('td', {text: tok}));
+        const val = typeof info === 'object' ? `${info.formatted || ''} (${info.usd_value || ''})` : String(info);
+        const isNeg = val.startsWith('-');
+        tr.appendChild(el('td', {text: val, style: `color: ${isNeg ? 'var(--red)' : 'var(--green)'}; font-family: var(--font-mono);`}));
+        profBody.appendChild(tr);
+      });
+    });
+    profTbl.appendChild(profBody);
+    profCard.appendChild(el('div', {class: 'table-wrap'}, [profTbl]));
+    container.appendChild(profCard);
+  }
+
+  // ── 6. Decoded call trace with filters ──
+  if (hasTrace) {
     container.appendChild(el('div', {class: 'section-title', text: 'Call Trace'}));
-    container.appendChild(collapsible('Expand Call Trace', (body) => {
+
+    const KNOWN_SELS = {
+      '0x095ea7b3':'approve','0xa9059cbb':'transfer','0x23b872dd':'transferFrom',
+      '0x70a08231':'balanceOf','0x18160ddd':'totalSupply','0x313ce567':'decimals',
+      '0x0b4c7e4d':'add_liquidity','0xb72df5de':'add_liquidity','0x3df02124':'exchange',
+      '0xcc2b27d7':'remove_liq_one','0x1a4d01d2':'remove_liquidity',
+      '0x4903b0d1':'remove_liq_one','0x4515cef3':'add_liquidity',
+      '0xbb7b8b80':'get_virtual_price','0x42b0b77c':'supply',
+      '0xe0232b42':'flashLoan','0x128acb08':'swap','0x414bf389':'exactInputSingle',
+      '0x2e1a7d4d':'withdraw','0x5c60da1b':'implementation','0x4efecaa5':'withdraw',
+      '0x40c10f19':'mint','0x79cc6790':'burnFrom','0xfeaf968c':'latestRoundData',
+    };
+    const NOISE_FUNCS = new Set(['balanceOf','totalSupply','decimals','latestRoundData','implementation']);
+
+    const ADDR_LABELS = {};
+    Object.entries(D.addresses).forEach(([addr, info]) => {
+      const name = info.classify?.known_entity || info.labels?.[0] || '';
+      if (name) ADDR_LABELS[addr.toLowerCase()] = name;
+    });
+    if (hasContracts) {
+      analysis.contracts_involved.forEach(c => {
+        const addr = (c.address || '').replace(/`/g, '').toLowerCase();
+        if (addr && c.name) ADDR_LABELS[addr] = c.name;
+      });
+    }
+
+    // Filter controls
+    const filterDiv = el('div', {class: 'flow-controls', style: 'margin-bottom: 8px;'});
+    let currentFilter = 'important';
+    const filters = [
+      {id: 'important', label: 'Key calls only'},
+      {id: 'all', label: 'All calls'},
+      {id: 'value', label: 'Value-carrying'},
+      {id: 'errors', label: 'Errors only'},
+    ];
+    const traceCard = el('div', {class: 'card'});
+    const traceTree = el('div', {style: 'font-family: var(--font-mono); font-size: 12px; overflow-x: auto; max-height: 600px; overflow-y: auto; padding: 8px;'});
+
+    function shouldShow(call, depth, filter) {
+      const inp = (call.input || '').slice(0, 10);
+      const funcLabel = KNOWN_SELS[inp] || inp;
+      const typ = call.type || 'CALL';
+      const err = call.error || '';
+      const valHex = call.value || '0x0';
+      const val = parseInt(valHex, 16) / 1e18;
+      if (filter === 'all') return true;
+      if (filter === 'errors') return !!err;
+      if (filter === 'value') return val > 0.0001;
+      // 'important' — skip noise at depth
+      if (typ === 'STATICCALL' && depth > 2) return false;
+      if (typ === 'DELEGATECALL' && depth > 3) return false;
+      if (NOISE_FUNCS.has(funcLabel) && depth > 2) return false;
+      if (funcLabel === 'approve' && depth > 2) return false;
+      return true;
+    }
+
+    function rebuildTrace(filter) {
+      traceTree.innerHTML = '';
+      const traceData = hasTrace.trace || hasTrace.internal_transactions || hasTrace;
+      if (traceData && typeof traceData === 'object' && !Array.isArray(traceData)) {
+        renderCallNode(traceData, 0, filter);
+      } else if (Array.isArray(traceData)) {
+        traceData.forEach(t => {
+          const line = el('div', {style: 'white-space: pre; padding: 1px 0;'});
+          line.textContent = `${t.type || 'CALL'} ${shortAddr(t.from || '')} → ${shortAddr(t.to || '')}`;
+          traceTree.appendChild(line);
+        });
+      }
+    }
+
+    function renderCallNode(call, depth, filter) {
+      if (depth > 10) return;
+      const to = (call.to || '').toLowerCase();
+      const inp = (call.input || '').slice(0, 10);
+      const typ = call.type || 'CALL';
+      const err = call.error || '';
+      const valHex = call.value || '0x0';
+      const val = parseInt(valHex, 16) / 1e18;
+
+      if (shouldShow(call, depth, filter)) {
+        const addrLabel = ADDR_LABELS[to] || shortAddr(to);
+        const funcLabel = KNOWN_SELS[inp] || inp;
+        const indent = '  '.repeat(depth);
+        const valStr = val > 0.0001 ? ` [${val.toFixed(4)} ETH]` : '';
+        const errStr = err ? ' REVERTED' : '';
+        const typeColor = err ? 'var(--red)' : typ === 'STATICCALL' ? 'var(--text-dim)' : typ === 'DELEGATECALL' ? 'var(--purple)' : 'var(--text)';
+
+        const line = el('div', {style: `color: ${typeColor}; white-space: pre; padding: 1px 0; cursor: pointer;`});
+        const arrow = (call.calls && call.calls.length) ? '▸ ' : '  ';
+        line.textContent = `${indent}${arrow}${addrLabel}.${funcLabel}${valStr}${errStr}`;
+        line.title = `${typ} → ${to}\nSelector: ${inp}`;
+        traceTree.appendChild(line);
+      }
+
+      (call.calls || []).forEach(sub => renderCallNode(sub, depth + 1, filter));
+    }
+
+    filters.forEach(f => {
+      const btn = el('button', {text: f.label, style: f.id === currentFilter ? 'background: var(--accent-dim); border-color: var(--accent);' : '', onclick: () => {
+        currentFilter = f.id;
+        filterDiv.querySelectorAll('button').forEach(b => b.style.background = 'var(--surface2)');
+        btn.style.background = 'var(--accent-dim)';
+        rebuildTrace(f.id);
+      }});
+      filterDiv.appendChild(btn);
+    });
+    container.appendChild(filterDiv);
+
+    rebuildTrace(currentFilter);
+    traceCard.appendChild(traceTree);
+    container.appendChild(traceCard);
+
+    container.appendChild(collapsible('Raw Call Trace JSON', (body) => {
       body.appendChild(el('div', {class: 'json-viewer', html: syntaxHighlight(analysis.call_trace)}));
     }));
   }
 
-  // Storage diffs
-  if (analysis.storage_diffs && analysis.storage_diffs.length) {
-    container.appendChild(el('div', {class: 'section-title', text: 'Storage Diffs'}));
-    analysis.storage_diffs.forEach(diff => {
-      container.appendChild(el('div', {class: 'json-viewer', html: syntaxHighlight(diff), style: 'margin-bottom: 8px;'}));
+  // ── 7. Source code viewer ──
+  if (hasSource) {
+    container.appendChild(el('div', {class: 'section-title', text: 'Contract Source Code'}));
+
+    const vulnLines = new Set();
+    const rootCause = analysis.vulnerability?.root_cause || '';
+    const lineRefs = rootCause.match(/L\d+/g) || [];
+    lineRefs.forEach(ref => vulnLines.add(parseInt(ref.slice(1))));
+
+    analysis.source_files.forEach(src => {
+      const name = src.contract_name || src.address || 'Contract';
+      const compiler = src.compiler_version || '';
+      const title = compiler ? `${name} (${compiler})` : name;
+      const sourceCode = src.source_code || '';
+
+      if (!sourceCode) {
+        container.appendChild(collapsible(title, (body) => {
+          body.appendChild(el('div', {class: 'json-viewer', html: syntaxHighlight(src)}));
+        }));
+        return;
+      }
+
+      container.appendChild(collapsible(title, (body) => {
+        const codeDiv = el('div', {style: 'background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 12px; overflow-x: auto; max-height: 500px; overflow-y: auto;'});
+        const lines = sourceCode.split('\n');
+        lines.forEach((line, i) => {
+          const lineNum = i + 1;
+          const isHighlighted = vulnLines.has(lineNum);
+          const bgStyle = isHighlighted ? 'background: hsl(0, 50%, 15%); border-left: 3px solid var(--red); padding-left: 9px;' : '';
+          const lineEl = el('div', {style: `display: flex; font-family: var(--font-mono); font-size: 11px; line-height: 1.6; ${bgStyle}`});
+          lineEl.appendChild(el('span', {text: String(lineNum).padStart(4), style: `color: ${isHighlighted ? 'var(--red)' : 'var(--text-dim)'}; user-select: none; min-width: 40px; text-align: right; padding-right: 12px;`}));
+          let highlighted = line
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/(def |event |struct |interface |contract |function |pragma |import |from )/g, '<span style="color:var(--purple)">$1</span>')
+            .replace(/(@external|@internal|@view|@nonreentrant|@pure|public|private|internal|external|view|pure|nonpayable|payable)/g, '<span style="color:var(--yellow)">$1</span>')
+            .replace(/(uint256|int128|address|bool|bytes32|string|mapping|uint8|uint128)/g, '<span style="color:var(--accent)">$1</span>')
+            .replace(/(#[^\n]*)/g, '<span style="color:var(--text-dim)">$1</span>')
+            .replace(/("(?:[^"\\]|\\.)*")/g, '<span style="color:var(--green)">$1</span>');
+          lineEl.appendChild(el('span', {html: highlighted, style: 'white-space: pre;'}));
+          codeDiv.appendChild(lineEl);
+        });
+        body.appendChild(codeDiv);
+      }));
     });
   }
 
-  // Source files
-  if (analysis.source_files && analysis.source_files.length) {
-    container.appendChild(el('div', {class: 'section-title', text: 'Source Code'}));
-    analysis.source_files.forEach(src => {
-      container.appendChild(collapsible(src.contract_name || src.address || 'Contract', (body) => {
-        body.appendChild(el('div', {class: 'json-viewer', html: syntaxHighlight(src)}));
-      }));
+  // ── 8. Storage diffs (before/after) ──
+  if (hasDiffs) {
+    container.appendChild(el('div', {class: 'section-title', text: 'Storage State Changes'}));
+    analysis.storage_diffs.forEach(diff => {
+      if (diff.before && diff.after) {
+        const card = el('div', {class: 'card'});
+        const grid = el('div', {style: 'display: grid; grid-template-columns: 1fr 1fr; gap: 12px;'});
+        const beforeDiv = el('div', {style: 'padding: 8px; background: hsl(0,50%,15%); border-radius: 4px;'});
+        beforeDiv.appendChild(el('div', {text: `Before (Block ${diff.before.block || '?'})`, style: 'font-size: 11px; color: var(--red); margin-bottom: 4px;'}));
+        beforeDiv.appendChild(el('div', {text: diff.before.value || '?', style: 'font-family: var(--font-mono); font-size: 12px; word-break: break-all;'}));
+        const afterDiv = el('div', {style: 'padding: 8px; background: hsl(140,40%,15%); border-radius: 4px;'});
+        afterDiv.appendChild(el('div', {text: `After (Block ${diff.after.block || '?'})`, style: 'font-size: 11px; color: var(--green); margin-bottom: 4px;'}));
+        afterDiv.appendChild(el('div', {text: diff.after.value || '?', style: 'font-family: var(--font-mono); font-size: 12px; word-break: break-all;'}));
+        grid.appendChild(beforeDiv);
+        grid.appendChild(afterDiv);
+        card.appendChild(grid);
+        container.appendChild(card);
+      } else {
+        container.appendChild(el('div', {class: 'json-viewer', html: syntaxHighlight(diff), style: 'margin-bottom: 8px;'}));
+      }
     });
   }
 })();

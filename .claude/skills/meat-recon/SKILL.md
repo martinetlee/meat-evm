@@ -106,11 +106,25 @@ After expanding:
 
 Add all newly discovered attacker/victim addresses to monitored_addresses.
 
+## Evidence Checklist
+
+| Evidence | Command | Saved to |
+|----------|---------|----------|
+| Tx history | `meat txlist <addr>` | `evidence/txlist/` |
+| Token transfers | `meat transfers <addr>` | `evidence/transfers/` |
+| Address classify | `meat classify <addr>` | `evidence/classify/` |
+| Event logs | `meat logs ...` | `evidence/logs/` |
+| Address labels | `meat label <addr> -r <role>` | `addresses.json` |
+| New tx decodes | `meat tx <hash>` | `evidence/tx/` |
+| Case updates | manual | `case.json`, `findings/recon.md` |
+
 ## CORRECTNESS RULES
 
-1. **Attacker classification requires evidence:**
+1. **All commands must save evidence.** Verify `MEAT_CASE` is set. Check `_meta.evidence_saved` after each command.
+2. **Attacker classification requires evidence:**
    - CONFIRMED: initiated the exploit tx, or received stolen funds directly
    - HIGH: funded by confirmed attacker, or deployed a contract used in attack
    - MEDIUM: similar behavior pattern, same funding source
-2. **Victim classification requires:** funds flowed OUT during the attack (CONFIRMED), or is the target contract (CONFIRMED)
-3. Everything else is "related" or "unknown" until proven
+3. **Victim classification requires:** funds flowed OUT during the attack (CONFIRMED), or is the target contract (CONFIRMED)
+4. Everything else is "related" or "unknown" until proven
+5. **Label every discovered address** with `meat label` — role, name, source, confidence.

@@ -203,9 +203,9 @@ def quick(input_str, chain, case):
     # Build tx result — skip expensive per-contract log decoding for speed
     tx_result = _build_tx_result(tx_data, receipt_data, chain_cfg, chain, rpc, explorer, meta, skip_log_decode=True)
 
-    # Save evidence
+    # Save evidence — save decoded result, not raw tx
     if evidence:
-        p1, new1 = evidence.save("tx", tx_hash, tx_data, chain)
+        p1, new1 = evidence.save("tx", tx_hash, tx_result, chain)
         meta.evidence_paths.append(f"{p1} ({'new' if new1 else 'cached'})")
         if receipt_data:
             p2, new2 = evidence.save("receipt", tx_hash, receipt_data, chain)
@@ -300,7 +300,7 @@ def tx(tx_hash, chain, case, compact):
     result = _build_tx_result(tx_data, receipt_data, chain_cfg, chain, rpc, explorer, meta)
 
     if evidence:
-        p1, new1 = evidence.save("tx", tx_hash, tx_data, chain)
+        p1, new1 = evidence.save("tx", tx_hash, result, chain)
         meta.evidence_paths.append(f"{p1} ({'new' if new1 else 'cached'})")
         if receipt_data:
             p2, new2 = evidence.save("receipt", tx_hash, receipt_data, chain)
@@ -427,16 +427,24 @@ def _extract_events(logs: list[dict]) -> dict:
     return {"transfers": transfers, "approvals": approvals, "weth": weth}
 
 
+MAX_TOKEN_RESOLVES = 20
+MAX_ENRICH_SECONDS = 15
+
+
 def _enrich_tokens(events: dict, resolver, meta: Meta | None) -> dict[str, dict]:
     """Resolve token info for each unique token address. Returns {addr: {name, symbol, decimals}}."""
+    import time
     seen: dict[str, dict | None] = {}
+    resolve_count = 0
+    start_time = time.time()
     all_items = events["transfers"] + events["weth"] + events["approvals"]
     for item in all_items:
         addr = item.get("token_address", "").lower()
         if not addr or addr in seen:
             pass
-        elif resolver:
+        elif resolver and resolve_count < MAX_TOKEN_RESOLVES and (time.time() - start_time) < MAX_ENRICH_SECONDS:
             seen[addr] = resolve_token_info(addr, resolver)
+            resolve_count += 1
         else:
             seen[addr] = None
 
@@ -1523,6 +1531,64 @@ def funder(addresses, chain, case):
         evidence.save("funder", "cluster_analysis", output, chain_cfg.name)
 
     _output(output)
+
+
+@cli.command("annotate")
+@click.argument("tx_hash")
+@click.argument("annotations_json")
+@click.option("--case", help="Case name")
+def annotate(tx_hash, annotations_json, case):
+    """Save trace annotations for a transaction.
+
+    ANNOTATIONS_JSON is a JSON string or @file path containing:
+    [{"path": ".8", "title": "Flash Loan", "purpose": "Borrow 160M USDC", "phase": "setup"}, ...]
+
+    Each annotation has:
+      path:    trace call path (e.g. ".8.1.0") — from calltrace depth indices
+      title:   short step name
+      purpose: why this call matters
+      phase:   optional grouping (setup, manipulation, extraction, cashout)
+    """
+    from pathlib import Path as P
+
+    case_name = _resolve_case(case)
+    if not case_name:
+        _error("--case is required (or set MEAT_CASE env var)")
+
+    config = get_config()
+    case_dir = config.cases_dir / case_name
+    if not case_dir.exists():
+        _error(f"Case '{case_name}' not found")
+
+    if annotations_json.startswith("@"):
+        file_path = P(annotations_json[1:])
+        if not file_path.exists():
+            _error(f"File not found: {file_path}")
+        raw = file_path.read_text()
+    else:
+        raw = annotations_json
+
+    try:
+        annotations = json.loads(raw)
+    except json.JSONDecodeError as e:
+        _error(f"Invalid JSON: {e}")
+
+    if isinstance(annotations, list):
+        annotations = {"tx_hash": tx_hash, "annotations": annotations}
+    elif isinstance(annotations, dict) and "annotations" not in annotations:
+        _error("JSON must be a list of annotations or {annotations: [...]}")
+
+    annotations["tx_hash"] = tx_hash
+
+    out_path = case_dir / "evidence" / "trace_annotations.json"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(annotations, indent=2))
+
+    _output({
+        "saved": True,
+        "path": str(out_path.relative_to(case_dir)),
+        "annotation_count": len(annotations.get("annotations", [])),
+    })
 
 
 @cli.command("report")

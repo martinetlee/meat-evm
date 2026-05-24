@@ -11,114 +11,110 @@ arguments: "Case name (optional — uses MEAT_CASE env var if set)"
 
 You are tracing stolen funds. Always: `source .venv/bin/activate`
 
+## EVIDENCE RULES
+
+**Verify `MEAT_CASE` and `MEAT_CHAIN` are set before running any command.** All data-fetching commands save evidence automatically when case is set. After each command, check `_meta.evidence_saved` to confirm persistence.
+
 ## Step 1: Load case state
 
 ```bash
-python3 -m meat case show <case-name>
+python3 -m meat case show $MEAT_CASE
 ```
 
-Identify attacker addresses and the attack block number.
+Identify attacker/collector addresses and the attack block number from case.json and addresses.json.
 
 ## Step 2: Run flow graph
 
-For each attacker address, trace outflows starting from the attack block:
+For each attacker/collector address, trace outflows:
 
 ```bash
-python3 -m meat flow <attacker_addr> --depth 2 --start-block <attack_block>
+python3 -m meat flow <collector_addr> --depth 2
 ```
 
-The flow command:
-- **If Alchemy RPC is configured**: Uses `alchemy_getAssetTransfers` — single API call per address covering ETH + internal + ERC20 + ERC721 + ERC1155 with pre-enriched token names. Much faster than explorer.
-- **Otherwise**: Uses Etherscan explorer (3 calls per address: txlist + internal + tokentx)
-- Follows BOTH outgoing AND incoming token transfers (catches DEX swap outputs)
-- Auto-labels known entities (CEX deposits, bridges, mixers, DEX routers)
-- Check `_meta.data_sources` to see which path was used
+**Evidence saved**: `evidence/flow/<address>.json` — contains nodes[], edges[], summary.
 
-## Step 3: Classify each destination
+The flow command:
+- **Alchemy RPC**: `alchemy_getAssetTransfers` — single API call per address.
+- **Explorer fallback**: 3 calls per address (txlist + internal + tokentx).
+- Follows BOTH outgoing AND incoming transfers (catches DEX swap outputs).
+- Auto-labels known entities (CEX, bridges, mixers, DEX routers).
+
+## Step 3: Gas funding analysis
+
+Identify attacker-controlled addresses via gas funding source:
+
+```bash
+python3 -m meat funder <addr1> <addr2> <addr3> ...
+```
+
+**Evidence saved**: `evidence/funder/cluster_analysis.json` — clusters addresses by common gas funder.
+
+Addresses funded by a known attacker/collector are definitively attacker-controlled.
+
+## Step 4: Classify and label each destination
 
 For every new address in the flow graph:
 
 ```bash
-python3 -m meat classify <addr>
+python3 -m meat classify <addr>     # evidence/classify/<addr>.json
+python3 -m meat label <addr> -r <role> -n "<name>" --source "<source>"
 ```
 
-Check `known_entity` field for automatic categorization:
-- `cex` → **CEX deposit** (Binance, Coinbase, Kraken). Law enforcement can subpoena.
-- `mixers` → **Mixer** (Tornado Cash, Railgun). Tracing becomes probabilistic.
-- `bridges` → **Bridge**. Note destination chain. Offer to continue tracing cross-chain.
-- `dex_routers` → **DEX swap**. Check what came out:
-  ```bash
-  python3 -m meat tx <swap_tx_hash> --compact
-  ```
-  The net_flows will show what tokens the attacker received from the swap.
-- `lending` → **DeFi deposit**. Funds may be parked as collateral.
-- No known_entity → **Unknown address**. Likely attacker-controlled if it's an EOA.
-
-## Step 4: Search for approval-based drains
-
-For token approvals the attacker may have set:
-
-```bash
-python3 -m meat logs --event "Approval(address,address,uint256)" --topic2 <attacker_padded_to_32_bytes> --from-block <attack_block> --chain <chain>
-```
-
-This finds all tokens where the attacker was approved as spender.
+Check `known_entity` for categorization: `cex`, `mixers`, `bridges`, `dex_routers`, `lending`.
 
 ## Step 5: Check current balances
 
-For each attacker-controlled address:
+For each attacker-controlled address, `classify` output includes:
+- `balance_formatted` — current native token balance
+- `token_balances` — all ERC-20 balances (Alchemy)
 
-```bash
-python3 -m meat classify <addr>
-```
-
-- `balance_formatted` — current ETH balance
-- `token_balances` — all ERC-20 balances (available when Alchemy RPC is configured). Shows every non-zero token the address holds — critical for knowing if stolen tokens are still there.
-
-Cross-reference to identify:
-- Addresses that still hold funds (recovery opportunity)
-- Addresses that have been fully drained (already moved)
+Cross-reference to identify recovery opportunities vs already-drained addresses.
 
 ## Step 6: Cross-chain bridges
 
 If funds crossed a bridge:
-1. Note the bridge contract, source tx, destination chain, expected recipient
-2. Ask the user if they want to continue tracing on the destination chain
-3. If yes, switch chain:
-   ```bash
-   export MEAT_CHAIN=<destination_chain>
-   python3 -m meat flow <recipient_addr> --depth 2
-   ```
+1. Note bridge contract, source tx, destination chain, recipient
+2. Switch chain: `export MEAT_CHAIN=<destination_chain>`
+3. Continue: `python3 -m meat flow <recipient_addr> --depth 2`
 
-## Step 7: Write fund trace report
+## Step 7: Update case.json
+
+Add recovery information to case.json:
+
+```json
+{
+  "summary": {
+    "total_stolen": {"ETH": "100"},
+    "total_stolen_usd": "~$350,000",
+    "total_recovered": {},
+    "total_recovered_usd": "$0",
+    "potentially_recoverable_usd": "~$170,000"
+  }
+}
+```
+
+## Step 8: Write fund trace report
 
 Write `cases/<case>/findings/fund-trace.md` with:
+1. Flow diagram (ASCII)
+2. Recovery summary table (CEX deposits, mixers, still-held, bridges)
+3. Total stolen vs potentially recoverable
 
-1. **Flow diagram** (ASCII):
-```
-Attacker EOA (0xDead...)
-  ├─ 200 ETH ($340,000) → 0xCafe... (intermediate)
-  │   ├─ 100 ETH ($170,000) → Tornado Cash (mixer) ⚠️
-  │   └─ 100 ETH ($170,000) → Binance 14 (CEX deposit) ✓
-  ├─ 1M USDC ($1,000,000) → Uniswap V3 (swapped to ETH)
-  │   └─ 500 ETH ($850,000) → 0xBabe... (intermediate)
-  └─ 50 ETH ($85,000) → remains at 0xDead...
-```
+## Evidence Checklist
 
-2. **Recovery summary** (using USD values from net_flows):
-
-| Category | Amount | Status |
-|----------|--------|--------|
-| CEX deposits | $170,000 | Potentially recoverable (contact exchange) |
-| Mixers | $170,000 | Likely unrecoverable |
-| Still at attacker addresses | $85,000 | Can be monitored |
-| Cross-chain bridges | $1,850,000 | Continue trace on destination |
-
-3. **Total:** $X stolen, $Y potentially recoverable
+| Evidence | Command | Saved to |
+|----------|---------|----------|
+| Flow graph | `meat flow <addr>` | `evidence/flow/<addr>.json` |
+| Gas funding clusters | `meat funder <addrs>` | `evidence/funder/cluster_analysis.json` |
+| Address classifications | `meat classify <addr>` | `evidence/classify/<addr>.json` |
+| Address labels | `meat label <addr>` | `addresses.json` |
+| Swap tx decodes | `meat tx <hash> --compact` | `evidence/tx/<hash>.json` |
+| Case summary | manual update | `case.json` |
+| Findings | manual write | `findings/fund-trace.md` |
 
 ## CORRECTNESS RULES
 
 1. **Only follow confirmed on-chain transfers.** Every edge must be a real Transfer event or ETH transfer.
-2. **Use USD values.** The net_flows include DeFiLlama prices — use them for recovery prioritization.
+2. **Use USD values.** The net_flows include DeFiLlama prices.
 3. **Don't speculate about mixer outputs.** After Tornado Cash, label as "trace ends at mixer."
-4. **Note timestamps.** "200 ETH moved 30 minutes after attack" matters for recovery.
+4. **Check `_meta.evidence_saved`** after each command to confirm data was persisted.

@@ -76,6 +76,18 @@ MONITOR UPDATE — <case-name>
 
 If no new activity: "No new activity since block <N>." (keep it brief for loop mode)
 
+## Evidence Checklist
+
+All commands must use `--case $MEAT_CASE` (or have env var set):
+
+| Evidence | Command | Saved to |
+|----------|---------|----------|
+| New tx list | `meat txlist <addr> --start-block <N>` | `evidence/txlist/` |
+| New transfers | `meat transfers <addr> --start-block <N>` | `evidence/transfers/` |
+| New addr classify | `meat classify <addr>` | `evidence/classify/` |
+| New addr labels | `meat label <addr> -r <role>` | `addresses.json` |
+| Case state | update via API | `case.json` (last_monitored, monitored_addresses) |
+
 ## Loop mode
 
 Run continuously:

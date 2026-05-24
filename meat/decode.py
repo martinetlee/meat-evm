@@ -255,18 +255,25 @@ def resolve_token_info(token_address: str, rpc_or_explorer) -> dict | None:
 
     if isinstance(rpc_or_explorer, RPCClient):
         try:
+            old_timeout = rpc_or_explorer.timeout
+            rpc_or_explorer.timeout = 5
             name_hex = rpc_or_explorer.eth_call({"to": token_address, "data": "0x06fdde03"})
             symbol_hex = rpc_or_explorer.eth_call({"to": token_address, "data": "0x95d89b41"})
             decimals_hex = rpc_or_explorer.eth_call({"to": token_address, "data": "0x313ce567"})
             if symbol_hex and symbol_hex != "0x":
                 from meat.classify import _decode_string
+                raw_decimals = int(decimals_hex, 16) if decimals_hex and decimals_hex != "0x" else 18
+                if raw_decimals > 77:
+                    raw_decimals = 18
                 info = {
                     "name": _decode_string(name_hex),
                     "symbol": _decode_string(symbol_hex),
-                    "decimals": int(decimals_hex, 16) if decimals_hex and decimals_hex != "0x" else 18,
+                    "decimals": raw_decimals,
                 }
         except Exception:
             pass
+        finally:
+            rpc_or_explorer.timeout = old_timeout
 
     if info is None and isinstance(rpc_or_explorer, ExplorerClient):
         try:

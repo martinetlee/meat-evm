@@ -46,22 +46,32 @@ def _build_report_data(case_dir: Path) -> dict:
             pass
 
     evidence_dir = case_dir / "evidence"
-    evidence_index = _build_evidence_index(evidence_dir)
-    evidence_data = _load_evidence_data(evidence_dir)
 
-    transactions = _extract_transactions(evidence_data)
     native_token = chain_cfg.get("native_token", "ETH")
     case_created = case_json.get("created")
     rpc = None
+    explorer = None
     try:
         chain_obj = cfg.get_chain(chain_name)
         if chain_obj.has_rpc():
             rpc = RPCClient(chain_obj.rpc_url)
+        if chain_obj.has_explorer():
+            from meat.explorer import ExplorerClient, RateLimiter
+            limiter = RateLimiter(cfg.rate_limit)
+            explorer = ExplorerClient(chain_obj.explorer_base, chain_obj.explorer_api_key,
+                                      limiter, chain_obj.chain_id)
     except (ValueError, Exception):
         pass
+
+    _auto_collect(case_dir, case_json, addresses, rpc, explorer, chain_name)
+
+    evidence_data = _load_evidence_data(evidence_dir)
+    evidence_index = _build_evidence_index(evidence_dir)
+
+    transactions = _extract_transactions(evidence_data)
     flow = _extract_flow(evidence_data, addresses, chain_name, native_token, rpc,
                          case_created)
-    analysis = _extract_analysis(case_dir, evidence_data)
+    analysis = _extract_analysis(case_dir, evidence_data, addresses, evidence_data)
 
     journal = _parse_journal(case_dir / "journal.md")
     findings = _load_findings(case_dir / "findings")
@@ -96,6 +106,162 @@ def _build_report_data(case_dir: Path) -> dict:
         "findings": findings,
         "exploit_indicators": case_json.get("exploit_indicators", {}),
     }
+
+
+def _auto_collect(case_dir: Path, case_json: dict, addresses: dict,
+                  rpc: RPCClient | None, explorer, chain: str):
+    """Auto-fetch missing evidence before building the report."""
+    from meat.evidence import EvidenceStore
+    evidence = EvidenceStore(case_dir)
+
+    cfg = get_config()
+    chain_obj = None
+    try:
+        chain_obj = cfg.get_chain(chain)
+    except Exception:
+        pass
+
+    # 1. Collect attack tx hashes from all sources
+    tx_hashes = set()
+
+    # From trace evidence filenames (most reliable — we traced these)
+    trace_dir = case_dir / "evidence" / "trace"
+    if trace_dir.exists():
+        for f in trace_dir.glob("*.json"):
+            tx_hashes.add(f.stem.lower())
+
+    # From flow evidence edges
+    flow_dir = case_dir / "evidence" / "flow"
+    if flow_dir.exists():
+        for e_file in flow_dir.glob("*.json"):
+            try:
+                envelope = json.loads(e_file.read_text())
+                for edge in envelope.get("data", {}).get("edges", []):
+                    h = edge.get("tx_hash")
+                    if h and h.startswith("0x"):
+                        tx_hashes.add(h.lower())
+            except (json.JSONDecodeError, IOError):
+                pass
+
+    # From monitored addresses (recent activity)
+    if rpc and rpc.is_alchemy:
+        for m in case_json.get("monitored_addresses", []):
+            addr = m.get("address", "")
+            if addr:
+                try:
+                    data = rpc.alchemy_get_asset_transfers(
+                        from_address=addr, category=["external", "erc20"],
+                        max_count="0xA", order="desc", with_metadata=True,
+                    )
+                    for t in (data or {}).get("transfers", []):
+                        h = t.get("hash")
+                        if h:
+                            tx_hashes.add(h.lower())
+                except Exception:
+                    pass
+
+    # Also include the attack tx hash from case.json summary if present
+    attack_tx = case_json.get("attack_tx")
+    if attack_tx:
+        tx_hashes.add(attack_tx.lower())
+
+    # 2. Fetch tx data — lightweight for large txs, full decode for small ones
+    if rpc and chain_obj:
+        from meat.cli import _build_tx_result
+        for tx_hash in list(tx_hashes)[:10]:
+            if evidence.exists("tx", tx_hash):
+                continue
+            try:
+                raw_tx = rpc.get_transaction(tx_hash)
+                raw_receipt = rpc.get_transaction_receipt(tx_hash)
+                if not raw_tx:
+                    continue
+                log_count = len(raw_receipt.get("logs", [])) if raw_receipt else 0
+                if log_count > 30:
+                    # Large tx — save basic info without full token enrichment
+                    value_wei = int(raw_tx.get("value", "0x0"), 16)
+                    gas_used = int(raw_receipt.get("gasUsed", "0x0"), 16) if raw_receipt else 0
+                    gas_price = int(raw_tx.get("gasPrice", "0x0"), 16)
+                    status_hex = raw_receipt.get("status", "0x1") if raw_receipt else "0x1"
+                    from meat.decode import format_value
+                    tx_data = {
+                        "hash": tx_hash, "chain": chain,
+                        "block_number": int(raw_tx.get("blockNumber", "0x0"), 16),
+                        "from": raw_tx.get("from", ""), "to": raw_tx.get("to", ""),
+                        "value_wei": str(value_wei),
+                        "value_formatted": format_value(value_wei, 18) + f" {chain_obj.native_token}",
+                        "status": "success" if int(status_hex, 16) == 1 else "reverted",
+                        "gas_used": gas_used,
+                        "tx_fee_formatted": format_value(gas_used * gas_price, 18) + f" {chain_obj.native_token}",
+                        "log_count": log_count,
+                        "_note": f"Large tx ({log_count} logs) — run 'meat tx {tx_hash}' for full decode",
+                    }
+                    evidence.save("tx", tx_hash, tx_data, chain)
+                else:
+                    tx_data = _build_tx_result(
+                        raw_tx, raw_receipt, chain_obj, chain,
+                        rpc, explorer, skip_log_decode=True,
+                    )
+                    evidence.save("tx", tx_hash, tx_data, chain)
+            except Exception:
+                pass
+
+    # 3. Fetch source code for victim contracts
+    if explorer:
+        for addr, info in addresses.items():
+            if info.get("role") not in ("victim",):
+                continue
+            if evidence.exists("source", addr.lower()):
+                continue
+            try:
+                src_data = explorer.get_source_code(addr)
+                if src_data and src_data.get("SourceCode"):
+                    evidence.save("source", addr.lower(), {
+                        "address": addr,
+                        "contract_name": src_data.get("ContractName", ""),
+                        "compiler_version": src_data.get("CompilerVersion", ""),
+                        "source_code": src_data.get("SourceCode", ""),
+                        "abi": src_data.get("ABI", ""),
+                    }, chain)
+            except Exception:
+                pass
+
+    # 4. Flow graph — only auto-build for key compromise (EOA attacker, fund tracing)
+    # For smart contract exploits, flow graph should be built via /meat-trace
+    exploit_type = case_json.get("exploit_type", "")
+    if exploit_type in ("key_compromise", "approval_abuse"):
+        flow_dir = case_dir / "evidence" / "flow"
+        if not flow_dir.exists() or not list(flow_dir.glob("*.json")):
+            collector_addrs = [a for a, info in addresses.items()
+                               if info.get("role") in ("collector",)]
+            if collector_addrs and (rpc or explorer):
+                try:
+                    from meat.trace import build_flow_graph
+                    root = collector_addrs[0]
+                    graph = build_flow_graph(root, explorer, chain, depth=2, rpc=rpc)
+                    result = graph.to_dict()
+                    result["root"] = root
+                    result["chain"] = chain
+                    result["depth"] = 2
+                    evidence.save("flow", root.lower(), result, chain)
+                except Exception:
+                    pass
+
+    # 5. Classify addresses that lack classify data
+    for addr, info in addresses.items():
+        if evidence.exists("classify", addr.lower()):
+            continue
+        classify_data = info.get("classify")
+        if classify_data:
+            evidence.save("classify", addr.lower(), classify_data, chain)
+        elif rpc or explorer:
+            try:
+                from meat.classify import classify_address
+                result = classify_address(addr, rpc, explorer)
+                if result:
+                    evidence.save("classify", addr.lower(), result, chain)
+            except Exception:
+                pass
 
 
 def _parse_journal(journal_path: Path) -> list[dict]:
@@ -576,7 +742,9 @@ def _enrich_flow_nodes(flow: dict, addresses: dict) -> dict:
     return flow
 
 
-def _extract_analysis(case_dir: Path, evidence_data: dict) -> dict:
+def _extract_analysis(case_dir: Path, evidence_data: dict,
+                      addresses: dict | None = None,
+                      all_evidence: dict | None = None) -> dict:
     analysis = {
         "vulnerability": None,
         "attack_walkthrough": [],
@@ -598,7 +766,371 @@ def _extract_analysis(case_dir: Path, evidence_data: dict) -> dict:
         if isinstance(data, dict):
             analysis["source_files"].append(data)
 
+    # Parse from findings/analysis.md
+    analysis_md = case_dir / "findings" / "analysis.md"
+    if analysis_md.exists():
+        md_text = analysis_md.read_text()
+        analysis["vulnerability"] = _parse_vulnerability_from_md(md_text)
+        analysis["attack_walkthrough"] = _parse_walkthrough_from_md(md_text)
+        analysis["contracts_involved"] = _parse_contracts_table_from_md(md_text)
+
+    # Fallback: parse from case.json exploit_indicators
+    if not analysis["vulnerability"]:
+        case_json = json.loads((case_dir / "case.json").read_text())
+        indicators = case_json.get("exploit_indicators", {})
+        exploit_type = case_json.get("exploit_type", "")
+        type_indicators = indicators.get(exploit_type, {})
+        if type_indicators:
+            analysis["vulnerability"] = {
+                "type": exploit_type.replace("_", " ").title(),
+                "subtype": type_indicators.get("oracle_manipulation") or type_indicators.get("flash_loan") or None,
+                "severity": "critical",
+                "root_cause": type_indicators.get("victim_protocol") or type_indicators.get("oracle_manipulation") or "",
+                "confidence": case_json.get("confidence", "UNKNOWN"),
+            }
+
+    # Parse call sequence from trace for sequence diagram
+    if analysis["call_trace"] and addresses:
+        analysis["call_sequence"] = _parse_call_sequence(
+            analysis["call_trace"], addresses, all_evidence
+        )
+
+    # Load trace annotations (structured narrative from /meat-analyze)
+    annotations_file = case_dir / "evidence" / "trace_annotations.json"
+    if annotations_file.exists():
+        try:
+            analysis["trace_annotations"] = json.loads(annotations_file.read_text())
+        except (json.JSONDecodeError, IOError):
+            pass
+
+    # Extract flash loan info from exploit_indicators
+    case_json = json.loads((case_dir / "case.json").read_text())
+    indicators = case_json.get("exploit_indicators", {})
+    exploit_type = case_json.get("exploit_type", "")
+    type_indicators = indicators.get(exploit_type, {})
+    if type_indicators.get("flash_loan"):
+        analysis["flash_loan"] = type_indicators["flash_loan"]
+
+    # Extract profit breakdown from attack tx net_flows
+    attack_tx_hash = case_json.get("attack_tx", "")
+    if attack_tx_hash:
+        for key, data in evidence_data.get("tx", {}).items():
+            if key.lower() == attack_tx_hash.lower() and isinstance(data, dict):
+                analysis["profit_breakdown"] = data.get("net_flows")
+                break
+
     return analysis
+
+
+def _parse_vulnerability_from_md(md_text: str) -> dict | None:
+    vuln = {}
+    field_map = {
+        "type": "type", "severity": "severity", "confidence": "confidence",
+        "root cause": "root_cause", "affected contract": "affected_contract",
+        "affected contracts": "affected_contract",
+    }
+    in_vuln_section = False
+    for line in md_text.split("\n"):
+        stripped = line.strip()
+        if "## Vulnerability" in stripped:
+            in_vuln_section = True
+            continue
+        if stripped.startswith("## ") and in_vuln_section and "Vulnerability" not in stripped:
+            break
+        if in_vuln_section and stripped.startswith("- **"):
+            for label, key in field_map.items():
+                if label in stripped.lower() and "**" in stripped:
+                    val = stripped.split(":", 1)[-1].strip() if ":" in stripped else ""
+                    val = re.sub(r"\*+", "", val).strip()
+                    if val:
+                        vuln[key] = val
+                    break
+
+    # Also extract from Summary section
+    summary_lines = []
+    in_summary = False
+    for line in md_text.split("\n"):
+        if line.strip().startswith("## Summary"):
+            in_summary = True
+            continue
+        if line.strip().startswith("## ") and in_summary:
+            break
+        if in_summary and line.strip():
+            summary_lines.append(line.strip())
+    if summary_lines and "root_cause" not in vuln:
+        vuln["root_cause"] = " ".join(summary_lines[:3])
+    if not vuln.get("type") and summary_lines:
+        vuln["type"] = "Smart Contract Exploit"
+    if not vuln.get("severity"):
+        vuln["severity"] = "critical"
+
+    return vuln if vuln else None
+
+
+KNOWN_SELECTORS = {
+    "0x095ea7b3": "approve", "0xa9059cbb": "transfer", "0x23b872dd": "transferFrom",
+    "0x70a08231": "balanceOf", "0x18160ddd": "totalSupply", "0x313ce567": "decimals",
+    "0x0b4c7e4d": "add_liquidity", "0xb72df5de": "add_liquidity", "0x3df02124": "exchange",
+    "0xcc2b27d7": "remove_liq_one_coin", "0x1a4d01d2": "remove_liquidity",
+    "0x4903b0d1": "remove_liq_one_coin", "0x4515cef3": "add_liquidity",
+    "0xbb7b8b80": "get_virtual_price", "0x42b0b77c": "supply",
+    "0xe0232b42": "flashLoan", "0x128acb08": "swap", "0x414bf389": "exactInputSingle",
+    "0x2e1a7d4d": "withdraw", "0x5c60da1b": "implementation", "0x4efecaa5": "withdraw",
+    "0x40c10f19": "mint", "0x79cc6790": "burnFrom", "0xfeaf968c": "latestRoundData",
+    "0x31f57072": "onFlashLoan", "0x1b11d0ff": "executeOperation",
+    "0x9341a475": "settle", "0xd98964f1": "getExchangeRate",
+    "0x6d5433e6": "updateAccounting", "0xaa9a0912": "deposit",
+    "0x4ebd0b94": "updatePrice", "0x62de91e9": "sync",
+    "0xfa461e33": "uniswapV3SwapCallback", "0x2e1a7d4d": "withdraw",
+}
+
+NOISE_SELECTORS = {
+    "0x70a08231", "0x18160ddd", "0x313ce567", "0xfeaf968c",
+    "0x5c60da1b", "0x00000000",
+}
+
+NOISE_CALL_TYPES = {"STATICCALL"}
+
+
+WELL_KNOWN_TOKENS = {
+    "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48": ("USDC", "Token"),
+    "0xdac17f958d2ee523a2206206994597c13d831ec7": ("USDT", "Token"),
+    "0x6b175474e89094c44da98b954eedeac495271d0f": ("DAI", "Token"),
+    "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2": ("WETH", "Token"),
+    "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599": ("WBTC", "Token"),
+    "0x6c3f90f043a72fa612cbac8115ee7e52bde6e490": ("3CRV", "Curve"),
+    "0x99d8a9c45b2eca8864373a26d1459e3dff1e17f3": ("MIM", "Abracadabra"),
+    "0x0000000000000000000000000000000000000000": ("Null", "System"),
+    "0xe592427a0aece92de3edee1f18e0157c05861564": ("Uniswap Router", "Uniswap"),
+}
+
+
+def _parse_call_sequence(trace_data: dict, addresses: dict,
+                         evidence_data: dict | None = None) -> dict:
+    """Extract a structured call sequence from a nested call trace."""
+    addr_labels = {}
+    addr_protocols = {}
+
+    # 1. Labels from addresses.json
+    for addr, info in addresses.items():
+        name = ""
+        if info.get("classify", {}).get("known_entity"):
+            name = info["classify"]["known_entity"]
+        elif info.get("labels"):
+            name = info["labels"][0]
+        if name:
+            addr_labels[addr.lower()] = name
+        role = info.get("role", "")
+        if role:
+            addr_protocols[addr.lower()] = role
+
+    # 2. Labels from well-known addresses
+    for addr, (name, proto) in WELL_KNOWN_TOKENS.items():
+        if addr not in addr_labels:
+            addr_labels[addr] = name
+
+    # 3. Labels from tx evidence (token_transfers have token_name)
+    if evidence_data:
+        for key, tx_data in evidence_data.get("tx", {}).items():
+            if not isinstance(tx_data, dict):
+                continue
+            for t in tx_data.get("token_transfers", []):
+                token_addr = (t.get("token_address") or "").lower()
+                if token_addr and token_addr not in addr_labels:
+                    sym = t.get("token_symbol") or t.get("token_name") or ""
+                    if sym:
+                        addr_labels[token_addr] = sym
+
+    # 4. Labels from evidence/source (contract_name)
+    if evidence_data:
+        for key, src_data in evidence_data.get("source", {}).items():
+            if isinstance(src_data, dict):
+                addr = (src_data.get("address") or key).lower()
+                name = src_data.get("contract_name", "")
+                if name and addr not in addr_labels:
+                    addr_labels[addr] = name
+
+    # 5. Labels from evidence/classify
+    if evidence_data:
+        for key, cls_data in evidence_data.get("classify", {}).items():
+            if isinstance(cls_data, dict):
+                addr = key.lower()
+                if addr not in addr_labels:
+                    entity = cls_data.get("known_entity")
+                    if entity:
+                        addr_labels[addr] = entity if isinstance(entity, str) else entity.get("label", "")
+                    elif cls_data.get("token_info", {}).get("symbol"):
+                        addr_labels[addr] = cls_data["token_info"]["symbol"]
+
+
+    trace = trace_data.get("trace", trace_data)
+    if not isinstance(trace, dict) or "calls" not in trace:
+        return {"contracts": [], "calls": []}
+
+    contracts = {}
+    calls = []
+
+    def _add_contract(addr):
+        addr = addr.lower()
+        if addr not in contracts:
+            label = addr_labels.get(addr, "")
+            role = addr_protocols.get(addr, "unknown")
+            contracts[addr] = {
+                "address": addr,
+                "label": label,
+                "role": role,
+            }
+
+    def _walk(call, depth, parent_from=""):
+        call_type = call.get("type", "CALL")
+        to_addr = (call.get("to") or "").lower()
+        from_addr = (call.get("from") or parent_from).lower()
+        selector = (call.get("input") or "")[:10]
+        error = call.get("error", "")
+        value_hex = call.get("value", "0x0")
+
+        if call_type in NOISE_CALL_TYPES:
+            for sub in call.get("calls", []):
+                _walk(sub, depth, from_addr)
+            return
+
+        if call_type == "DELEGATECALL":
+            for sub in call.get("calls", []):
+                _walk(sub, depth, from_addr)
+            return
+
+        if selector in NOISE_SELECTORS:
+            return
+
+        func_name = KNOWN_SELECTORS.get(selector, "")
+        if not func_name and selector and len(selector) >= 10:
+            func_name = selector
+
+        if func_name in ("approve", "transfer", "transferFrom") and depth > 2:
+            return
+
+        if to_addr and from_addr and func_name:
+            _add_contract(from_addr)
+            _add_contract(to_addr)
+            try:
+                val_wei = int(value_hex, 16) if value_hex.startswith("0x") else 0
+            except (ValueError, TypeError):
+                val_wei = 0
+
+            calls.append({
+                "from": from_addr,
+                "to": to_addr,
+                "function": func_name,
+                "depth": depth,
+                "error": error,
+                "value_wei": str(val_wei) if val_wei > 0 else "",
+            })
+
+        for sub in call.get("calls", []):
+            _walk(sub, depth + 1, from_addr)
+
+    _walk(trace, 0)
+
+    # Determine protocol groupings from labels and well-known addresses
+    protocol_groups = {}
+
+    def _detect_protocol(addr, label):
+        label_lower = (label or "").lower()
+        # Check well-known token table
+        wk = WELL_KNOWN_TOKENS.get(addr)
+        if wk and wk[1] not in ("Token", "System"):
+            return wk[1]
+        if "curve" in label_lower or "3pool" in label_lower or "3crv" in label_lower:
+            return "Curve"
+        if "mim" in label_lower and "3crv" in label_lower:
+            return "Curve"
+        if "machine" in label_lower or "dialectic" in label_lower or "dusd" in label_lower:
+            return "Machine"
+        if "morpho" in label_lower:
+            return "Morpho"
+        if "aave" in label_lower or label_lower.startswith("a") and "usdc" in label_lower:
+            return "Aave"
+        if "uniswap" in label_lower or "uni " in label_lower:
+            return "Uniswap"
+        return None
+
+    for addr, info in contracts.items():
+        proto = _detect_protocol(addr, info.get("label", ""))
+        if proto:
+            info["protocol"] = proto
+            protocol_groups.setdefault(proto, [])
+            if addr not in protocol_groups[proto]:
+                protocol_groups[proto].append(addr)
+
+    return {
+        "contracts": contracts,
+        "calls": calls,
+        "protocol_groups": protocol_groups,
+    }
+
+
+def _parse_walkthrough_from_md(md_text: str) -> list[dict]:
+    steps = []
+    in_walkthrough = False
+    current_step = None
+    for line in md_text.split("\n"):
+        stripped = line.strip()
+        if "## Attack Walkthrough" in stripped:
+            in_walkthrough = True
+            continue
+        if stripped.startswith("## ") and in_walkthrough and "Walkthrough" not in stripped:
+            break
+        if not in_walkthrough:
+            continue
+        if stripped.startswith("### ") or stripped.startswith("#### Step"):
+            if current_step:
+                steps.append(current_step)
+            title = re.sub(r"^#{1,4}\s*", "", stripped)
+            current_step = {"title": title, "details": []}
+        elif current_step and stripped:
+            if stripped.startswith("**Call**:") or stripped.startswith("**call**:"):
+                current_step["call"] = stripped.split(":", 1)[-1].strip().strip("`")
+            elif stripped.startswith("**Purpose**:") or stripped.startswith("**purpose**:"):
+                current_step["purpose"] = stripped.split(":", 1)[-1].strip()
+            elif stripped.startswith("**Source**:") or stripped.startswith("**source**:"):
+                current_step["source"] = stripped.split(":", 1)[-1].strip().strip("`")
+            elif stripped.startswith("**USD impact**:"):
+                current_step["usd_impact"] = stripped.split(":", 1)[-1].strip()
+            else:
+                current_step["details"].append(stripped)
+    if current_step:
+        steps.append(current_step)
+    return steps
+
+
+def _parse_contracts_table_from_md(md_text: str) -> list[dict]:
+    contracts = []
+    in_table = False
+    headers = []
+    for line in md_text.split("\n"):
+        stripped = line.strip()
+        if "## Contracts Involved" in stripped:
+            in_table = True
+            continue
+        if stripped.startswith("## ") and in_table and "Contracts" not in stripped:
+            break
+        if not in_table:
+            continue
+        if stripped.startswith("|") and stripped.endswith("|"):
+            cells = [c.strip() for c in stripped.split("|")[1:-1]]
+            if all(c.replace("-", "").replace(":", "").strip() == "" for c in cells):
+                continue
+            if not headers:
+                headers = [c.lower() for c in cells]
+            else:
+                entry = {}
+                for i, h in enumerate(headers):
+                    if i < len(cells):
+                        val = cells[i].strip("`").strip()
+                        entry[h] = val
+                if entry:
+                    contracts.append(entry)
+    return contracts
 
 
 def _load_findings(findings_dir: Path) -> dict:

@@ -12,116 +12,139 @@ arguments: "Transaction hash(es), address(es), or block explorer URL(s)"
 
 You are analyzing an EVM exploit. Always activate the venv first: `source .venv/bin/activate`
 
-## Step 1: Quick analysis
+## EVIDENCE RULES
 
-Start with the `quick` command for an immediate overview:
+Every CLI command MUST include `--case <case-name>` (or have `MEAT_CASE` env var set). This ensures all fetched data is saved to `cases/<case>/evidence/` automatically. After each command, verify evidence was saved by checking `_meta.evidence_saved` in the output.
+
+Evidence is write-once (immutable) and stored as JSON envelopes with `_meta` (category, key, chain, timestamp) + `data` payload.
+
+## Step 1: Quick analysis
 
 ```bash
 python3 -m meat quick $ARGUMENTS
 ```
 
-This single command: parses input → detects chain → fetches tx + receipt → classifies from/to addresses → computes net flows with USD values → returns a compact summary in ~9 seconds.
+Parses input → detects chain → fetches tx + receipt → classifies from/to → computes net flows with USD. If chain isn't detected from a URL, add `--chain <chain>`.
 
-If chain isn't detected from a URL, add `--chain <chain>`.
-
-## Step 2: Create case
+## Step 2: Create case and set env vars
 
 ```bash
 python3 -m meat case create <YYYY-MM-DD-protocol> --chain <chain>
-```
-
-Then set env vars to avoid repeating flags:
-```bash
 export MEAT_CHAIN=<chain> MEAT_CASE=<case-name>
 ```
 
-All subsequent commands will use these defaults.
+**All subsequent commands inherit these defaults.** Verify with `echo $MEAT_CASE $MEAT_CHAIN`.
 
-## Step 3: Full transaction decode (if needed)
+## Step 3: Save attack transaction evidence
 
-If the quick output needs more detail:
-
-```bash
-python3 -m meat tx <hash>          # full output: all transfers, decoded logs, internal txs
-python3 -m meat tx <hash> --compact  # summary only
-```
-
-The full output includes:
-- `token_transfers` with names, symbols, decimals, formatted amounts
-- `approvals` — ERC20 approval events (critical for key compromise detection)
-- `weth_events` — ETH wrap/unwrap events
-- `net_flows` — per-address per-token net movement with USD values (DeFiLlama)
-- `decoded_logs` — all logs decoded using each emitting contract's ABI
-- `internal_transactions` — contract-to-contract calls
-- `decode_coverage` — how many logs were successfully decoded
-- `_meta` — data sources, evidence paths, enrichment failures, warnings
-
-## Step 4: Classify additional addresses
+Re-run the attack tx with case set to save evidence:
 
 ```bash
-python3 -m meat classify <address>
+python3 -m meat tx <hash>          # saves to evidence/tx/ and evidence/receipt/
+python3 -m meat tx <hash> --compact  # same evidence, shorter output
 ```
 
-Output now includes:
-- **type** (eoa/contract), **balance** (ETH), **known entity** (CEX, bridge, mixer, DEX)
-- **token_balances** — all ERC-20 balances (when Alchemy RPC available). Shows every non-zero token the address holds.
-- **proxy detection** — EIP-1967, UUPS, beacon, minimal proxy (EIP-1167), diamond (EIP-2535)
-- **admin_info** — owner(), admin(), AccessControl roles
-- **is_lp_pair** — Uniswap V2-style LP detection with token0/token1
-- **checks_performed** — what was tried and what was skipped (for auditability)
+**Verify**: Check `_meta.evidence_saved` lists `evidence/tx/<hash>.json`.
+
+## Step 4: Classify and label ALL addresses
+
+Label every address that appears in the attack — not just attacker/victim, but also tokens, protocols, and intermediaries. The report sequence diagram and flow graph use these labels.
+
+**4a. Label key actors** (attacker, victim, protocols):
+```bash
+python3 -m meat classify <address>    # saves to evidence/classify/
+python3 -m meat label <address> -r <role> -n "<name>" --note "<reason>"
+```
+
+Roles: `attacker`, `victim`, `collector`, `funder`, `exchange`, `mixer`, `bridge`, `intermediate`.
+
+**4b. Label ALL token contracts** from the tx output:
+
+Check `token_transfers` in the tx output. For each unique `token_address`, label it:
+```bash
+python3 -m meat label <token_address> -r intermediate -n "<token_symbol>" --note "Token contract"
+```
+
+Common tokens to label: USDC, USDT, DAI, WETH, any LP tokens (3CRV, MIM-3CRV), protocol-specific tokens (MachineShare, aUSDC).
+
+**4c. Label protocol contracts** from the call trace:
+
+If you ran `meat calltrace`, check the decoded trace for contracts that were called. Label each with its name and protocol:
+```bash
+python3 -m meat label <contract_addr> -r intermediate -n "<contract_name>" --note "Part of <protocol>"
+```
+
+**Verify**: `addresses.json` contains ALL interacted addresses with labels. The report sequence diagram uses these labels for column headers.
 
 ## Step 5: Attack type classification
 
 Based on the data, classify the attack:
 
-- **Smart contract exploit**: Complex call, flash loans, unusual function calls, large token movements through DeFi protocols. Net flows show flash loan borrow/repay canceling naturally.
-- **Key compromise**: Simple transfers from victim EOA. Look for `approvals` in the tx output — attacker may have set approvals before draining. Use `meat logs --event 'Approval(address,address,uint256)' --address <token> --chain <chain>` to search for suspicious approvals.
-- **Governance attack**: Malicious proposals. Search with `meat logs --event 'ProposalCreated(...)' --address <governor>`.
-- **Rug pull / insider**: Look at `admin_info` in classify output — who is the owner? Use `meat logs --event 'OwnershipTransferred(address,address)' --address <contract>` to check ownership history.
+- **Smart contract exploit**: Complex call, flash loans, unusual function calls. Net flows show flash loan borrow/repay canceling.
+- **Key compromise**: Simple transfers from victim EOA. Check `approvals` in tx output.
+- **Governance attack**: Malicious proposals. `meat logs --event 'ProposalCreated(...)'`
+- **Access control**: Unprotected admin functions. Check `admin_info` in classify.
 
-## Step 6: Present findings
+## Step 6: Update case.json
 
-Use the USD values from net_flows. Example:
+After classification, update `case.json` with structured data:
 
+```json
+{
+  "exploit_type": "smart_contract_exploit|key_compromise|...",
+  "exploit_subtype": "oracle_manipulation|reentrancy|...",
+  "confidence": "CONFIRMED|HIGH|MEDIUM|LOW",
+  "attack_tx": "0x...",
+  "summary": {
+    "total_stolen": {"ETH": "100", "USDC": "50000"},
+    "total_stolen_usd": "~$350,000",
+    "attacker_addresses": 1,
+    "victim_addresses": 2,
+    "attack_txs": 1
+  },
+  "exploit_indicators": {
+    "<exploit_type>": {
+      "flash_loan": "...",
+      "oracle_manipulation": "...",
+      ...
+    }
+  }
+}
 ```
-RECON SUMMARY
-═══════════════════════════════════════
-Chain:          ethereum
-Attack type:    Smart contract exploit (CONFIRMED)
-Block:          16817996
-Timestamp:      2023-03-13
 
-ATTACKER(S):
-  0x5f259d0b... — EOA — balance: 3.61 ETH
-  0xebc29199... — contract (unverified) — exploit contract
+**This is critical for the report generator.** Without these fields, the report shows empty data.
 
-VICTIM(S):
-  0x27182842... — Euler (verified proxy → 0xec29b4c2...)
+## Step 7: Write findings
 
-NET FUND FLOWS:
-  Dai:  8,877,507 ($8,780,121) — from Euler to attacker contract
-
-ATTACK TX(es):
-  0xc310a0af... — success — 20 token transfers — fee: 0.11 ETH
-═══════════════════════════════════════
-```
-
-## Step 7: Save case state
-
-Write findings to `cases/<case>/findings/recon.md`. Every claim must cite evidence from `_meta.evidence_saved` paths.
+Write `cases/<case>/findings/recon.md`. Every claim must cite evidence from `_meta.evidence_saved` paths.
 
 ## Step 8: Offer next steps
 
-- **`/meat-recon`** — expand from partial info (find more txs, addresses, funding source)
-- **`/meat-trace`** — track where stolen funds went (with USD values)
-- **`/meat-analyze`** — understand the vulnerability (uses Tenderly traces, storage diffs, source code)
+- **`/meat-trace`** — track where stolen funds went
+- **`/meat-analyze`** — understand the vulnerability (call traces, source code)
+- **`/meat-recon`** — expand from partial info (find more txs, addresses)
 - **`/meat-poc`** — reproduce the exploit in Foundry
+- **`meat report <case>`** — generate HTML report from collected evidence
+
+## Evidence Checklist (verify before finishing)
+
+| Evidence | Command | Saved to |
+|----------|---------|----------|
+| Attack tx decode | `meat tx <hash>` | `evidence/tx/<hash>.json` |
+| Address classifications | `meat classify <addr>` | `evidence/classify/<addr>.json` |
+| **Key actor labels** | `meat label <addr> -r attacker/victim` | `addresses.json` |
+| **Token contract labels** | `meat label <token_addr> -r intermediate -n <symbol>` | `addresses.json` |
+| **Protocol contract labels** | `meat label <addr> -r intermediate -n <name>` | `addresses.json` |
+| Case metadata | manual edit | `case.json` (exploit_type, confidence, summary, attack_tx) |
+| Findings | manual write | `findings/recon.md` |
+
+**Critical**: Label ALL addresses from `token_transfers` and the call trace, not just attacker/victim. The report uses these labels for the sequence diagram and flow graph.
 
 ## CORRECTNESS RULES
 
 1. **Never claim without evidence.** Every statement must reference specific data from CLI output.
-2. **Use confidence levels.** CONFIRMED / HIGH / MEDIUM / LOW/HYPOTHESIS.
+2. **Use confidence levels.** CONFIRMED / HIGH / MEDIUM / LOW / HYPOTHESIS.
 3. **Report net flows with USD.** The net_flows field already computes this — use it directly.
 4. **Check `_meta.warnings`** — if it says "No RPC", token/admin detection was limited.
-5. **Check `_meta.enrichment_failures`** — these tokens couldn't be resolved. Classify them separately if important.
-6. **Check `_meta.data_sources`** — tells you if data came from RPC, explorer_proxy, Alchemy, Tenderly, or Sourcify.
+5. **Check `_meta.evidence_saved`** — confirm data was persisted to the case.
+6. **Check `_meta.data_sources`** — tells you if data came from RPC, explorer, Alchemy, Tenderly, or Sourcify.
