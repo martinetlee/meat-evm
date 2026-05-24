@@ -803,6 +803,14 @@ def _extract_analysis(case_dir: Path, evidence_data: dict,
         except (json.JSONDecodeError, IOError):
             pass
 
+    # Resolve annotations to phase ranges for the sequence diagram
+    if analysis.get("call_sequence") and analysis.get("trace_annotations"):
+        ann_data = analysis["trace_annotations"]
+        ann_list = ann_data.get("annotations", ann_data) if isinstance(ann_data, dict) else ann_data
+        if isinstance(ann_list, list):
+            phases = _resolve_phases(analysis["call_sequence"], ann_list)
+            analysis["call_sequence"]["phases"] = phases
+
     # Extract flash loan info from exploit_indicators
     case_json = json.loads((case_dir / "case.json").read_text())
     indicators = case_json.get("exploit_indicators", {})
@@ -871,17 +879,20 @@ KNOWN_SELECTORS = {
     "0x095ea7b3": "approve", "0xa9059cbb": "transfer", "0x23b872dd": "transferFrom",
     "0x70a08231": "balanceOf", "0x18160ddd": "totalSupply", "0x313ce567": "decimals",
     "0x0b4c7e4d": "add_liquidity", "0xb72df5de": "add_liquidity", "0x3df02124": "exchange",
-    "0xcc2b27d7": "remove_liq_one_coin", "0x1a4d01d2": "remove_liquidity",
-    "0x4903b0d1": "remove_liq_one_coin", "0x4515cef3": "add_liquidity",
-    "0xbb7b8b80": "get_virtual_price", "0x42b0b77c": "supply",
+    "0xcc2b27d7": "remove_liquidity_one_coin", "0x1a4d01d2": "remove_liquidity_one_coin",
+    "0x4903b0d1": "remove_liquidity_one_coin", "0x4515cef3": "add_liquidity",
+    "0x3c168eab": "remove_liquidity",
+    "0xbb7b8b80": "get_virtual_price", "0x42b0b77c": "flashLoanSimple",
     "0xe0232b42": "flashLoan", "0x128acb08": "swap", "0x414bf389": "exactInputSingle",
-    "0x2e1a7d4d": "withdraw", "0x5c60da1b": "implementation", "0x4efecaa5": "withdraw",
+    "0x2e1a7d4d": "withdraw", "0x5c60da1b": "implementation", "0x4efecaa5": "transferUnderlyingTo",
     "0x40c10f19": "mint", "0x79cc6790": "burnFrom", "0xfeaf968c": "latestRoundData",
-    "0x31f57072": "onFlashLoan", "0x1b11d0ff": "executeOperation",
-    "0x9341a475": "settle", "0xd98964f1": "getExchangeRate",
+    "0x31f57072": "onMorphoFlashLoan", "0x1b11d0ff": "executeOperation",
+    "0x9341a475": "accountForPosition", "0xd98964f1": "getExchangeRate",
     "0x6d5433e6": "updateAccounting", "0xaa9a0912": "deposit",
-    "0x4ebd0b94": "updatePrice", "0x62de91e9": "sync",
-    "0xfa461e33": "uniswapV3SwapCallback", "0x2e1a7d4d": "withdraw",
+    "0x4ebd0b94": "updateTotalAum", "0x62de91e9": "sync",
+    "0xfa461e33": "uniswapV3SwapCallback",
+    "0x5b1dac60": "getSharePrice", "0xd15e0053": "getReserveNormalizedIncome",
+    "0xa1fe0e8d": "executeMintToTreasury", "0x69328dec": "withdraw",
 }
 
 NOISE_SELECTORS = {
@@ -959,7 +970,7 @@ def _parse_call_sequence(trace_data: dict, addresses: dict,
                     entity = cls_data.get("known_entity")
                     if entity:
                         addr_labels[addr] = entity if isinstance(entity, str) else entity.get("label", "")
-                    elif cls_data.get("token_info", {}).get("symbol"):
+                    elif (cls_data.get("token_info") or {}).get("symbol"):
                         addr_labels[addr] = cls_data["token_info"]["symbol"]
 
 
@@ -1067,6 +1078,115 @@ def _parse_call_sequence(trace_data: dict, addresses: dict,
         "calls": calls,
         "protocol_groups": protocol_groups,
     }
+
+
+def _normalize_func(name: str) -> str:
+    return name.lower().replace("_", "")
+
+
+def _func_matches(call_func: str, ann_func: str) -> bool:
+    if not ann_func:
+        return True
+    if call_func == ann_func:
+        return True
+    cn = _normalize_func(call_func)
+    an = _normalize_func(ann_func)
+    return cn == an or cn.startswith(an) or an.startswith(cn)
+
+
+def _resolve_phases(call_sequence: dict, annotations: list) -> list[dict]:
+    """Resolve annotations against the call list to produce phase ranges.
+
+    Each annotation marks the start of a phase. The phase extends from
+    its matched call index to the next phase's start - 1.
+    """
+    calls = call_sequence.get("calls", [])
+    if not calls or not annotations:
+        return []
+
+    matched = []
+    claimed = set()
+
+    for ann in annotations:
+        ann_from = (ann.get("from") or "").lower()
+        ann_to = (ann.get("to") or "").lower()
+        ann_func = ann.get("function", "")
+        occurrence = ann.get("occurrence", 1)
+
+        if isinstance(occurrence, str) and occurrence == "all":
+            hit_count = 0
+            for i, c in enumerate(calls):
+                if i in claimed:
+                    continue
+                if ann_from and not c["from"].startswith(ann_from[:10]):
+                    continue
+                if ann_to and not c["to"].startswith(ann_to[:10]):
+                    continue
+                if ann_func and not _func_matches(c.get("function", ""), ann_func):
+                    continue
+                hit_count += 1
+                matched.append((i, {**ann, "_occurrence": hit_count}))
+                claimed.add(i)
+        else:
+            target_n = int(occurrence) if occurrence else 1
+            hit_count = 0
+            for i, c in enumerate(calls):
+                if i in claimed:
+                    continue
+                if ann_from and not c["from"].startswith(ann_from[:10]):
+                    continue
+                if ann_to and not c["to"].startswith(ann_to[:10]):
+                    continue
+                if ann_func and not _func_matches(c.get("function", ""), ann_func):
+                    continue
+                hit_count += 1
+                if hit_count == target_n:
+                    matched.append((i, ann))
+                    claimed.add(i)
+                    break
+
+    if not matched:
+        return []
+
+    matched.sort(key=lambda x: x[0])
+
+    phases = []
+    for idx, (call_idx, ann) in enumerate(matched):
+        if idx + 1 < len(matched):
+            end_idx = matched[idx + 1][0] - 1
+        else:
+            end_idx = len(calls) - 1
+
+        occ = ann.get("_occurrence", "")
+        title = ann.get("title", "")
+        if occ and isinstance(occ, int) and occ > 1:
+            title = f"{title} (cycle {occ})"
+
+        count = end_idx - call_idx + 1
+        phases.append({
+            "title": title,
+            "purpose": ann.get("purpose", ""),
+            "phase": ann.get("phase", ""),
+            "start_index": call_idx,
+            "end_index": end_idx,
+            "call_count": count,
+            "collapsed_default": count > 15,
+        })
+
+    # If calls exist before the first annotation, prepend an implicit phase
+    if matched[0][0] > 0:
+        first_start = matched[0][0]
+        phases.insert(0, {
+            "title": "Pre-attack Setup",
+            "purpose": "",
+            "phase": "setup",
+            "start_index": 0,
+            "end_index": first_start - 1,
+            "call_count": first_start,
+            "collapsed_default": first_start > 15,
+        })
+
+    return phases
 
 
 def _parse_walkthrough_from_md(md_text: str) -> list[dict]:

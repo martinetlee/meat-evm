@@ -720,6 +720,38 @@ def source(address, chain, save_dir, case):
             (save_path / f"{data.get('ContractName', 'Contract')}.sol").write_text(source_code)
             result["saved_files"] = [f"{data.get('ContractName', 'Contract')}.sol"]
 
+    # Auto-follow proxy chain: fetch implementation source code too
+    impl_chain = []
+    impl_addr = data.get("Implementation", "").strip()
+    proxy_names = {"BeaconProxy", "UpgradeableBeacon", "TransparentUpgradeableProxy",
+                   "ERC1967Proxy", "AdminUpgradeabilityProxy", "InitializableImmutableAdminUpgradeabilityProxy"}
+    seen = {address.lower()}
+    current_data = data
+    while impl_addr and impl_addr.lower() not in seen and len(impl_chain) < 5:
+        seen.add(impl_addr.lower())
+        try:
+            impl_data = explorer.get_source_code(impl_addr)
+        except ExplorerError:
+            break
+        if not impl_data or not impl_data.get("SourceCode"):
+            break
+        impl_name = impl_data.get("ContractName", "")
+        impl_chain.append({
+            "address": impl_addr,
+            "contract_name": impl_name,
+            "compiler_version": impl_data.get("CompilerVersion", ""),
+        })
+        if evidence:
+            evidence.save("source", impl_addr.lower(), impl_data, chain)
+        # Stop if we reached a non-proxy implementation
+        if impl_name not in proxy_names:
+            break
+        impl_addr = impl_data.get("Implementation", "").strip()
+
+    if impl_chain:
+        result["implementation_chain"] = impl_chain
+        meta.data_sources.append(f"proxy_chain({len(impl_chain)} hops)")
+
     result["_meta"] = meta.to_dict()
     _output(result)
 
@@ -1078,6 +1110,12 @@ def calltrace(tx_hash, chain, case):
 
     if evidence:
         evidence.save("trace", tx_hash, result, chain)
+
+    # Build decoded tree summary for readable output
+    if isinstance(trace_data, dict) and "calls" in trace_data:
+        addr_labels = _load_case_addr_labels(case)
+        decoded_tree = _decode_trace_tree(trace_data, addr_labels)
+        result["decoded_tree"] = decoded_tree
 
     _output(result)
 
@@ -1625,3 +1663,164 @@ def _hex_to_int(val) -> int | None:
         except ValueError:
             return None
     return None
+
+
+def _load_case_addr_labels(case_name: str | None) -> dict[str, str]:
+    """Load address labels from a case's addresses.json + classify evidence."""
+    labels = {}
+    if not case_name:
+        case_name = os.environ.get("MEAT_CASE")
+    if not case_name:
+        return labels
+    config = get_config()
+    case_dir = config.cases_dir / case_name
+    addr_file = case_dir / "addresses.json"
+    if addr_file.exists():
+        try:
+            with open(addr_file) as f:
+                addrs = json.load(f)
+            for addr, info in addrs.items():
+                if isinstance(info, dict):
+                    lbl = info.get("name") or (info.get("labels") or [None])[0]
+                    if lbl:
+                        labels[addr.lower()] = lbl
+        except (json.JSONDecodeError, OSError):
+            pass
+    classify_dir = case_dir / "evidence" / "classify"
+    if classify_dir.exists():
+        for fp in classify_dir.glob("*.json"):
+            try:
+                with open(fp) as f:
+                    data = json.load(f)
+                d = data.get("data", data)
+                addr = d.get("address", fp.stem).lower()
+                if addr not in labels:
+                    ti = d.get("token_info")
+                    if ti and isinstance(ti, dict) and ti.get("symbol"):
+                        labels[addr] = ti["symbol"]
+                    elif d.get("labels"):
+                        labels[addr] = d["labels"][0]
+            except (json.JSONDecodeError, OSError):
+                pass
+    return labels
+
+
+def _decode_trace_tree(trace: dict, addr_labels: dict[str, str], max_depth: int = 6) -> list[str]:
+    """Decode a call trace into a human-readable tree of lines."""
+    selector_cache = {}
+
+    def resolve_selector(sel: str) -> str:
+        if sel in selector_cache:
+            return selector_cache[sel]
+        results = lookup_selector(sel)
+        name = results[0].split("(")[0] if results else sel
+        selector_cache[sel] = name
+        return name
+
+    def label(addr: str) -> str:
+        return addr_labels.get(addr.lower(), addr[:10])
+
+    lines = []
+
+    def walk(node, depth=0):
+        if depth > max_depth:
+            subcalls = node.get("calls", [])
+            if subcalls:
+                lines.append(f"{'  ' * depth}... {len(subcalls)} subcalls")
+            return
+        typ = node.get("type", "CALL")
+        if typ == "DELEGATECALL":
+            for c in node.get("calls", []):
+                walk(c, depth)
+            return
+        to_addr = node.get("to", "")
+        if to_addr == "0x0000000000000000000000000000000000000000":
+            return
+        if to_addr.startswith("0x000000000000000000000000000000000000000"):
+            return
+        fr = label(node.get("from", ""))
+        to = label(to_addr)
+        inp = node.get("input", "")
+        sel = inp[:10] if len(inp) >= 10 else ""
+        fn_name = resolve_selector(sel) if sel else "(fallback)"
+        val = int(node.get("value", "0x0"), 16) if node.get("value") else 0
+        err = node.get("error", "")
+        parts = [f"{'  ' * depth}{fr} → {to}.{fn_name}()"]
+        if val > 0:
+            parts.append(f" [{val / 1e18:.4f} ETH]")
+        if err:
+            parts.append(" ERROR")
+        lines.append("".join(parts))
+        for c in node.get("calls", []):
+            walk(c, depth + 1)
+
+    walk(trace)
+    return lines
+
+
+def _collect_trace_addresses(trace: dict) -> set[str]:
+    """Recursively collect all unique addresses from a trace."""
+    addrs = set()
+
+    def walk(node):
+        fr = node.get("from", "")
+        to = node.get("to", "")
+        if fr and fr != "0x0000000000000000000000000000000000000000":
+            addrs.add(fr.lower())
+        if to and to != "0x0000000000000000000000000000000000000000":
+            addrs.add(to.lower())
+        for c in node.get("calls", []):
+            walk(c)
+
+    walk(trace)
+    return addrs
+
+
+@cli.command("trace-addresses")
+@click.argument("tx_hash")
+@click.option("--case", help="Case name for evidence lookup")
+@click.option("--chain", "-c", help="Chain name (default: from env)")
+def trace_addresses(tx_hash, case, chain):
+    """Extract all unique addresses from a saved call trace."""
+    case_name = _resolve_case(case)
+    if not case_name:
+        _error("--case is required (or set MEAT_CASE env var)")
+
+    config = get_config()
+    case_dir = config.cases_dir / case_name
+
+    tx_hash = tx_hash.lower()
+    trace_path = case_dir / "evidence" / "trace" / f"{tx_hash}.json"
+    if not trace_path.exists():
+        _error(f"No trace evidence found at {trace_path}. Run `meat calltrace {tx_hash}` first.")
+
+    with open(trace_path) as f:
+        data = json.load(f)
+
+    trace_data = data.get("data", data)
+    trace = trace_data.get("trace", trace_data)
+    if not isinstance(trace, dict):
+        _error("Trace data is not a nested call trace")
+
+    all_addrs = _collect_trace_addresses(trace)
+
+    # Load existing labels
+    addr_labels = _load_case_addr_labels(case_name)
+
+    results = []
+    for addr in sorted(all_addrs):
+        entry = {"address": addr}
+        if addr in addr_labels:
+            entry["label"] = addr_labels[addr]
+        else:
+            entry["label"] = None
+        results.append(entry)
+
+    labeled = sum(1 for r in results if r["label"])
+    _output({
+        "tx_hash": tx_hash,
+        "total_addresses": len(results),
+        "labeled": labeled,
+        "unlabeled": len(results) - labeled,
+        "addresses": results,
+    })

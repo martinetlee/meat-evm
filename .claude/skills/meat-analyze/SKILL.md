@@ -32,10 +32,7 @@ python3 -m meat source <victim_addr>       # saves to evidence/source/
 
 **Evidence saved**: `evidence/source/<addr>.json` — contract name, compiler, source code, ABI.
 
-If proxy (check classify output `proxy_type`), also fetch implementation:
-```bash
-python3 -m meat source <implementation_addr>
-```
+If the contract is a proxy (BeaconProxy, UpgradeableBeacon, ERC1967, etc.), `meat source` **automatically follows the proxy chain** and fetches all implementation source code. Check the output for `implementation_chain` to see what was fetched. No need to manually chase proxy → beacon → implementation.
 
 ## Step 3: Get the call trace
 
@@ -83,6 +80,17 @@ Walk through the call trace step by step. For each call:
 3. Why does the attacker make this call at this point?
 4. What state changes result?
 
+### Oracle dependency analysis
+
+If the exploit involves an oracle (price feed, rate oracle, share price), trace the **full dependency chain** before concluding on root cause:
+
+1. **Who reads the oracle?** (e.g., a Curve pool calls `_stored_rates()`)
+2. **What does the oracle read?** (e.g., `getSharePrice()` reads `lastTotalAum`)
+3. **Where does that data come from?** (e.g., `updateTotalAum()` reads `Caliber.getDetailedAum()`)
+4. **Does it circle back?** Does the data source depend on the same pool/contract state that the oracle consumer controls or can influence?
+
+If there is a circular dependency (pool pricing → oracle → state derived from pool balances), that circularity is the root cause — not just the access control on any individual function. A permissionless update function is the *enabling factor* that makes exploitation trivial, but restricting access alone does not fix a circular oracle dependency (keepers can be sandwiched, state can be temporarily imbalanced).
+
 ## Step 7b: Annotate the call trace
 
 After the trace walkthrough, save structured annotations that map your narrative to exact trace positions. This is critical for the report's sequence diagram.
@@ -124,13 +132,18 @@ Write `annotations.json` with one entry per key step. Each annotation must refer
 
 The report's sequence diagram overlays these annotations as divider bars between trace calls. No guessing — every annotation is anchored to an actual on-chain call.
 
-## Step 7c: Label ALL contracts from the call trace
+## Step 7c: Extract and label ALL contracts from the call trace
 
-After the trace walkthrough, label every contract that appears in the call trace. This is critical for the report's sequence diagram.
-
-For each contract in the trace:
+**First, extract all addresses from the trace** — never guess full addresses from truncated prefixes:
 ```bash
-python3 -m meat label <contract_addr> -r <role> -n "<name>" --note "<description>"
+python3 -m meat trace-addresses <attack_tx_hash>
+```
+This outputs all unique addresses with their current labels. Use the FULL addresses from this output for all subsequent labeling and classification.
+
+**Then classify and label each unlabeled address:**
+```bash
+python3 -m meat classify <full_address>
+python3 -m meat label <full_address> -r <role> -n "<name>" --note "<description>"
 ```
 
 Include:
@@ -141,6 +154,8 @@ Include:
 - **Attacker contracts** — role=attacker
 
 The sequence diagram groups contracts by protocol. Include the protocol name in the label where applicable (e.g., "Curve MIM/3CRV pool", "Aave V3 Pool").
+
+**IMPORTANT**: Always use full 42-character addresses from `trace-addresses` output. Never reconstruct full addresses from truncated trace output — you will get the wrong address.
 
 ## Step 8: Update case.json
 
@@ -206,10 +221,12 @@ Write `cases/<case>/findings/analysis.md` with this structure:
 | Evidence | Command | Saved to |
 |----------|---------|----------|
 | Call trace | `meat calltrace <hash>` | `evidence/trace/<hash>.json` |
-| Source code (each victim) | `meat source <addr>` | `evidence/source/<addr>.json` |
+| Source code (+ proxy chain) | `meat source <addr>` | `evidence/source/<addr>.json` (auto-follows proxies) |
+| All trace addresses | `meat trace-addresses <hash>` | stdout (use for labeling) |
 | Storage diffs | `meat storage <addr> --slot <s>` | manual |
 | Event logs | `meat logs --address <addr>` | `evidence/logs/` |
 | **ALL contract labels** | `meat label <addr> -r <role> -n <name>` | `addresses.json` |
+| Trace annotations | `meat annotate <hash> @file.json` | `evidence/trace_annotations.json` |
 | Case metadata | manual update | `case.json` (exploit_type, indicators) |
 | Findings | manual write | `findings/analysis.md` |
 

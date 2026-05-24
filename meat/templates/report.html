@@ -1337,69 +1337,14 @@ hm.appendChild(badge(C.status, C.status === 'active' ? 'yellow' : 'green'));
     });
     body.appendChild(lifelines);
 
-    // Build annotation map from trace_annotations (keyed by call index in filtered list)
-    // Annotations reference trace paths; we match them to filtered call indices
-    const traceAnnotations = analysis.trace_annotations?.annotations || [];
-    const annotationAtIndex = {};
+    const phaseColors = {setup: 'var(--text-dim)', manipulation: 'var(--red)', extraction: 'var(--yellow)', cashout: 'var(--green)'};
+    const allCalls = callSeq.calls || [];
+    const phases = callSeq.phases || [];
 
-    if (traceAnnotations.length) {
-      // Build path-to-filtered-index map by walking the trace
-      const allCalls = callSeq.calls || [];
-      const pathToAllIndex = {};
-      // The filtered calls are a subset of allCalls — map filtered index to all-calls index
-      const filteredToAll = [];
-      let fi = 0;
-      for (let ai = 0; ai < allCalls.length && fi < filteredCalls.length; ai++) {
-        if (allCalls[ai] === filteredCalls[fi]) {
-          filteredToAll.push(ai);
-          fi++;
-        }
-      }
-
-      traceAnnotations.forEach(ann => {
-        const path = ann.path || '';
-        // Find the call in allCalls that matches this path
-        // Path format: ".8.1.0" means root.calls[8].calls[1].calls[0]
-        // We match by finding the call at that path in the trace and finding its index in allCalls
-        // Simpler approach: match annotation to the filtered call closest to the described position
-        // by checking from/to/function if provided, or by sequential order
-        if (ann.call_index !== undefined) {
-          annotationAtIndex[ann.call_index] = ann;
-        } else if (ann.from && ann.to && ann.function) {
-          // Match by from+to+function
-          for (let i = 0; i < filteredCalls.length; i++) {
-            if (annotationAtIndex[i]) continue;
-            const fc = filteredCalls[i];
-            if (fc.from.startsWith(ann.from.toLowerCase()) &&
-                fc.to.startsWith(ann.to.toLowerCase()) &&
-                fc.function === ann.function) {
-              annotationAtIndex[i] = ann;
-              break;
-            }
-          }
-        }
-      });
-    }
-
-    // Render calls as arrows with trace annotations
-    filteredCalls.slice(0, 60).forEach((c, i) => {
-      // Insert annotation divider if this call has one
-      const ann = annotationAtIndex[i];
-      if (ann) {
-        const phaseColors = {setup: 'var(--text-dim)', manipulation: 'var(--red)', extraction: 'var(--yellow)', cashout: 'var(--green)'};
-        const color = phaseColors[ann.phase] || 'var(--yellow)';
-        const divider = el('div', {style: `position: relative; display: flex; align-items: center; padding: 6px 0; margin: 4px 0;`});
-        divider.appendChild(el('div', {style: `flex: 1; height: 1px; background: ${color}; opacity: 0.4;`}));
-        const badge = el('div', {style: `padding: 2px 10px; background: hsl(220,15%,14%); border: 1px solid ${color}; border-radius: 10px; font-size: 10px; color: ${color}; white-space: nowrap; margin: 0 8px;`});
-        badge.textContent = ann.title || '';
-        if (ann.purpose) badge.title = ann.purpose;
-        divider.appendChild(badge);
-        divider.appendChild(el('div', {style: `flex: 1; height: 1px; background: ${color}; opacity: 0.4;`}));
-        body.appendChild(divider);
-      }
-
+    function renderArrow(c, stepNum, parent) {
       const srcIdx = colIndex[c.from];
       const tgtIdx = colIndex[c.to];
+      if (srcIdx === undefined || tgtIdx === undefined || c.from === c.to) return;
       const leftIdx = Math.min(srcIdx, tgtIdx);
       const rightIdx = Math.max(srcIdx, tgtIdx);
       const goingRight = tgtIdx > srcIdx;
@@ -1408,12 +1353,12 @@ hm.appendChild(badge(C.status, C.status === 'active' ? 'yellow' : 'green'));
       const arrowW = rightPx - leftPx;
 
       const arrowColor = c.error ? '#d94040' :
-        c.function?.includes('flashLoan') || c.function?.includes('supply') ? '#e6a817' :
+        c.function?.includes('flashLoan') || c.function?.includes('Flash') ? '#e6a817' :
         c.function?.includes('swap') || c.function?.includes('exactInput') ? '#4caf50' :
         '#4fc3f7';
 
       const stepRow = el('div', {class: 'seq-step', style: 'min-height: 32px;'});
-      stepRow.appendChild(el('div', {class: 'seq-step-num', text: String(i + 1)}));
+      stepRow.appendChild(el('div', {class: 'seq-step-num', text: String(stepNum)}));
 
       const arrow = el('div', {class: 'seq-arrow', style: `left: ${leftPx}px; width: ${arrowW}px;`});
       arrow.appendChild(el('div', {class: 'seq-arrow-line', style: `background: ${arrowColor};`}));
@@ -1433,11 +1378,61 @@ hm.appendChild(badge(C.status, C.status === 'active' ? 'yellow' : 'green'));
       });
       arrow.appendChild(label);
       stepRow.appendChild(arrow);
-      body.appendChild(stepRow);
-    });
+      parent.appendChild(stepRow);
+    }
 
-    if (filteredCalls.length > 60) {
-      body.appendChild(el('div', {text: `... ${filteredCalls.length - 60} more calls`, style: 'text-align: center; color: var(--text-dim); font-size: 11px; padding: 8px;'}));
+    if (phases.length > 0) {
+      // Phase-based rendering
+      let globalStep = 1;
+      phases.forEach((phase, phaseIdx) => {
+        const color = phaseColors[phase.phase] || 'var(--yellow)';
+        // Phase header
+        const header = el('div', {style: `display: flex; align-items: center; padding: 8px 4px; margin: 6px 0 2px; cursor: pointer; user-select: none; border-radius: 6px; background: ${color}08;`});
+        const chevron = el('span', {text: phase.collapsed_default ? '▶' : '▼', style: `font-size: 10px; color: ${color}; width: 16px; flex-shrink: 0;`});
+        header.appendChild(chevron);
+        header.appendChild(el('div', {style: `flex: 1; height: 1px; background: ${color}; opacity: 0.3; margin: 0 6px;`}));
+        const badge = el('div', {style: `padding: 3px 12px; border: 1px solid ${color}; border-radius: 12px; font-size: 11px; font-weight: 600; color: ${color}; white-space: nowrap; background: hsl(220,15%,14%);`});
+        badge.textContent = phase.title || '';
+        if (phase.purpose) badge.title = phase.purpose;
+        header.appendChild(badge);
+        const countLabel = el('span', {text: ` (${phase.call_count} calls)`, style: `font-size: 10px; color: var(--text-dim); margin-left: 6px; flex-shrink: 0;`});
+        header.appendChild(countLabel);
+        header.appendChild(el('div', {style: `flex: 1; height: 1px; background: ${color}; opacity: 0.3; margin: 0 6px;`}));
+        body.appendChild(header);
+
+        // Phase body (collapsible)
+        const phaseBody = el('div', {});
+        if (phase.collapsed_default) phaseBody.style.display = 'none';
+
+        header.addEventListener('click', () => {
+          const visible = phaseBody.style.display !== 'none';
+          phaseBody.style.display = visible ? 'none' : '';
+          chevron.textContent = visible ? '▶' : '▼';
+        });
+
+        for (let i = phase.start_index; i <= phase.end_index && i < allCalls.length; i++) {
+          const c = allCalls[i];
+          if (colIndex[c.from] !== undefined && colIndex[c.to] !== undefined && c.from !== c.to) {
+            renderArrow(c, globalStep, phaseBody);
+            globalStep++;
+          }
+        }
+        body.appendChild(phaseBody);
+      });
+    } else {
+      // Fallback: flat rendering (no phases)
+      let stepNum = 1;
+      const maxFlat = 100;
+      for (let i = 0; i < allCalls.length && stepNum <= maxFlat; i++) {
+        const c = allCalls[i];
+        if (colIndex[c.from] !== undefined && colIndex[c.to] !== undefined && c.from !== c.to) {
+          renderArrow(c, stepNum, body);
+          stepNum++;
+        }
+      }
+      if (filteredCalls.length > maxFlat) {
+        body.appendChild(el('div', {text: `... ${filteredCalls.length - maxFlat} more calls`, style: 'text-align: center; color: var(--text-dim); font-size: 11px; padding: 8px;'}));
+      }
     }
 
     diagram.appendChild(body);
