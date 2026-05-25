@@ -1205,29 +1205,7 @@ hm.appendChild(badge(C.status, C.status === 'active' ? 'yellow' : 'green'));
     container.appendChild(callout);
   }
 
-  // ── 2. Flash loan lifecycle ──
-  if (hasFlashLoan) {
-    const flCard = el('div', {class: 'card', style: 'border-left: 3px solid var(--yellow); margin-bottom: 16px;'});
-    flCard.appendChild(el('div', {class: 'card-title', text: 'Flash Loan Lifecycle', style: 'color: var(--yellow);'}));
-    const flFlow = el('div', {style: 'display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; padding: 8px 0;'});
-    const arrow = () => el('span', {text: '→', style: 'color: var(--text-dim); font-size: 16px;'});
-    const step = (label, color) => { const s = el('div', {style: `padding: 6px 12px; background: ${color}22; border: 1px solid ${color}; border-radius: 6px; font-family: var(--font-mono); font-size: 12px;`}); s.textContent = label; return s; };
-    flFlow.appendChild(step('BORROW', '#e6a817'));
-    flFlow.appendChild(el('span', {text: analysis.flash_loan, style: 'font-size: 11px; color: var(--text-dim);'}));
-    flFlow.appendChild(arrow());
-    flFlow.appendChild(step('EXPLOIT', '#d94040'));
-    flFlow.appendChild(el('span', {text: 'manipulate prices + extract value', style: 'font-size: 11px; color: var(--text-dim);'}));
-    flFlow.appendChild(arrow());
-    flFlow.appendChild(step('REPAY', '#4caf50'));
-    flFlow.appendChild(el('span', {text: 'return borrowed amount + fee', style: 'font-size: 11px; color: var(--text-dim);'}));
-    flFlow.appendChild(arrow());
-    flFlow.appendChild(step('PROFIT', '#4fc3f7'));
-    flFlow.appendChild(el('span', {text: C.summary?.total_stolen_usd || '', style: 'font-size: 12px; font-weight: 600; color: var(--red);'}));
-    flCard.appendChild(flFlow);
-    container.appendChild(flCard);
-  }
-
-  // ── 3. Contract relationship map ──
+  // ── 2. Contract relationship map ──
   if (hasContracts) {
     container.appendChild(el('div', {class: 'section-title', text: 'Contracts Involved'}));
     const ctbl = el('table');
@@ -1398,11 +1376,25 @@ hm.appendChild(badge(C.status, C.status === 'active' ? 'yellow' : 'green'));
         const countLabel = el('span', {text: ` (${phase.call_count} calls)`, style: `font-size: 10px; color: var(--text-dim); margin-left: 6px; flex-shrink: 0;`});
         header.appendChild(countLabel);
         header.appendChild(el('div', {style: `flex: 1; height: 1px; background: ${color}; opacity: 0.3; margin: 0 6px;`}));
-        body.appendChild(header);
 
         // Phase body (collapsible)
         const phaseBody = el('div', {});
         if (phase.collapsed_default) phaseBody.style.display = 'none';
+
+        let visibleCount = 0;
+        for (let i = phase.start_index; i <= phase.end_index && i < allCalls.length; i++) {
+          const c = allCalls[i];
+          if (colIndex[c.from] !== undefined && colIndex[c.to] !== undefined && c.from !== c.to) {
+            renderArrow(c, globalStep, phaseBody);
+            globalStep++;
+            visibleCount++;
+          }
+        }
+
+        // Skip phases with no visible calls
+        if (visibleCount === 0) return;
+
+        countLabel.textContent = ` (${visibleCount} calls)`;
 
         header.addEventListener('click', () => {
           const visible = phaseBody.style.display !== 'none';
@@ -1410,13 +1402,7 @@ hm.appendChild(badge(C.status, C.status === 'active' ? 'yellow' : 'green'));
           chevron.textContent = visible ? '▶' : '▼';
         });
 
-        for (let i = phase.start_index; i <= phase.end_index && i < allCalls.length; i++) {
-          const c = allCalls[i];
-          if (colIndex[c.from] !== undefined && colIndex[c.to] !== undefined && c.from !== c.to) {
-            renderArrow(c, globalStep, phaseBody);
-            globalStep++;
-          }
-        }
+        body.appendChild(header);
         body.appendChild(phaseBody);
       });
     } else {

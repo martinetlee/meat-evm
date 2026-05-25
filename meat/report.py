@@ -792,7 +792,7 @@ def _extract_analysis(case_dir: Path, evidence_data: dict,
     # Parse call sequence from trace for sequence diagram
     if analysis["call_trace"] and addresses:
         analysis["call_sequence"] = _parse_call_sequence(
-            analysis["call_trace"], addresses, all_evidence
+            analysis["call_trace"], addresses, all_evidence, case_dir
         )
 
     # Load trace annotations (structured narrative from /meat-analyze)
@@ -917,8 +917,19 @@ WELL_KNOWN_TOKENS = {
 
 
 def _parse_call_sequence(trace_data: dict, addresses: dict,
-                         evidence_data: dict | None = None) -> dict:
+                         evidence_data: dict | None = None,
+                         case_dir: Path | None = None) -> dict:
     """Extract a structured call sequence from a nested call trace."""
+    # Load selector map from evidence/selector_map.json (resolved at calltrace time)
+    evidence_selectors = {}
+    if case_dir:
+        sel_path = case_dir / "evidence" / "selector_map.json"
+        if sel_path.exists():
+            try:
+                evidence_selectors = json.loads(sel_path.read_text())
+            except (json.JSONDecodeError, IOError):
+                pass
+
     addr_labels = {}
     addr_protocols = {}
 
@@ -1013,7 +1024,7 @@ def _parse_call_sequence(trace_data: dict, addresses: dict,
         if selector in NOISE_SELECTORS:
             return
 
-        func_name = KNOWN_SELECTORS.get(selector, "")
+        func_name = evidence_selectors.get(selector) or KNOWN_SELECTORS.get(selector, "")
         if not func_name and selector and len(selector) >= 10:
             func_name = selector
 

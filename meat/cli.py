@@ -1106,10 +1106,38 @@ def calltrace(tx_hash, chain, case):
     if methods_tried:
         meta.warnings.extend(methods_tried)
 
+    # Resolve all selectors in the trace and save the map as evidence
+    selector_map = {}
+    if isinstance(trace_data, dict) and "calls" in trace_data:
+        unique_sels = set()
+        def _collect_selectors(node):
+            inp = node.get("input", "")
+            if len(inp) >= 10:
+                unique_sels.add(inp[:10])
+            for c in node.get("calls", []):
+                _collect_selectors(c)
+        _collect_selectors(trace_data)
+        for sel in unique_sels:
+            results = lookup_selector(sel)
+            if results:
+                selector_map[sel] = results[0].split("(")[0]
+        if selector_map:
+            meta.data_sources.append(f"selector_lookup({len(selector_map)} resolved)")
+
     result = {"tx_hash": tx_hash, "chain": chain, "trace": trace_data, "_meta": meta.to_dict()}
 
     if evidence:
         evidence.save("trace", tx_hash, result, chain)
+        if selector_map:
+            sel_path = evidence.evidence_dir / "selector_map.json"
+            existing = {}
+            if sel_path.exists():
+                try:
+                    existing = json.loads(sel_path.read_text())
+                except (json.JSONDecodeError, IOError):
+                    pass
+            existing.update(selector_map)
+            sel_path.write_text(json.dumps(existing, indent=2))
 
     # Build decoded tree summary for readable output
     if isinstance(trace_data, dict) and "calls" in trace_data:
