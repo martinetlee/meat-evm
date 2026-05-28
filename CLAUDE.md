@@ -50,6 +50,14 @@ Python: requests, eth-abi, eth-utils, eth-hash[pycryptodome], click, pyyaml, pyt
 
 System (optional): cast, forge (Foundry) for PoC reproduction
 
+## Investigation Rules
+- All analysis claims MUST cite evidence from CLI tool output — no unsourced assertions
+- Do NOT reference external reports, blog posts, or news about the exploit
+- Do NOT use prior knowledge to skip investigation steps — follow the evidence even if you already know the answer
+- Web searches for protocol documentation or GitHub repos: ASK the user first
+- Web searches about the specific exploit/incident: NEVER — use only on-chain data via configured APIs
+- Report generation is presentation only — no RPC calls, no web fetches, no data synthesis
+
 ## Architecture
 - `meat/cli.py` — Click CLI entry point, all commands output JSON to stdout
 - `meat/config.py` — Loads chains.yaml + .env

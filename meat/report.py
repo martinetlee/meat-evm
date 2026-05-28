@@ -109,159 +109,11 @@ def _build_report_data(case_dir: Path) -> dict:
 
 
 def _auto_collect(case_dir: Path, case_json: dict, addresses: dict,
-                  rpc: RPCClient | None, explorer, chain: str):
-    """Auto-fetch missing evidence before building the report."""
-    from meat.evidence import EvidenceStore
-    evidence = EvidenceStore(case_dir)
-
-    cfg = get_config()
-    chain_obj = None
-    try:
-        chain_obj = cfg.get_chain(chain)
-    except Exception:
-        pass
-
-    # 1. Collect attack tx hashes from all sources
-    tx_hashes = set()
-
-    # From trace evidence filenames (most reliable — we traced these)
-    trace_dir = case_dir / "evidence" / "trace"
-    if trace_dir.exists():
-        for f in trace_dir.glob("*.json"):
-            tx_hashes.add(f.stem.lower())
-
-    # From flow evidence edges
-    flow_dir = case_dir / "evidence" / "flow"
-    if flow_dir.exists():
-        for e_file in flow_dir.glob("*.json"):
-            try:
-                envelope = json.loads(e_file.read_text())
-                for edge in envelope.get("data", {}).get("edges", []):
-                    h = edge.get("tx_hash")
-                    if h and h.startswith("0x"):
-                        tx_hashes.add(h.lower())
-            except (json.JSONDecodeError, IOError):
-                pass
-
-    # From monitored addresses (recent activity)
-    if rpc and rpc.is_alchemy:
-        for m in case_json.get("monitored_addresses", []):
-            addr = m.get("address", "")
-            if addr:
-                try:
-                    data = rpc.alchemy_get_asset_transfers(
-                        from_address=addr, category=["external", "erc20"],
-                        max_count="0xA", order="desc", with_metadata=True,
-                    )
-                    for t in (data or {}).get("transfers", []):
-                        h = t.get("hash")
-                        if h:
-                            tx_hashes.add(h.lower())
-                except Exception:
-                    pass
-
-    # Also include the attack tx hash from case.json summary if present
-    attack_tx = case_json.get("attack_tx")
-    if attack_tx:
-        tx_hashes.add(attack_tx.lower())
-
-    # 2. Fetch tx data — lightweight for large txs, full decode for small ones
-    if rpc and chain_obj:
-        from meat.cli import _build_tx_result
-        for tx_hash in list(tx_hashes)[:10]:
-            if evidence.exists("tx", tx_hash):
-                continue
-            try:
-                raw_tx = rpc.get_transaction(tx_hash)
-                raw_receipt = rpc.get_transaction_receipt(tx_hash)
-                if not raw_tx:
-                    continue
-                log_count = len(raw_receipt.get("logs", [])) if raw_receipt else 0
-                if log_count > 30:
-                    # Large tx — save basic info without full token enrichment
-                    value_wei = int(raw_tx.get("value", "0x0"), 16)
-                    gas_used = int(raw_receipt.get("gasUsed", "0x0"), 16) if raw_receipt else 0
-                    gas_price = int(raw_tx.get("gasPrice", "0x0"), 16)
-                    status_hex = raw_receipt.get("status", "0x1") if raw_receipt else "0x1"
-                    from meat.decode import format_value
-                    tx_data = {
-                        "hash": tx_hash, "chain": chain,
-                        "block_number": int(raw_tx.get("blockNumber", "0x0"), 16),
-                        "from": raw_tx.get("from", ""), "to": raw_tx.get("to", ""),
-                        "value_wei": str(value_wei),
-                        "value_formatted": format_value(value_wei, 18) + f" {chain_obj.native_token}",
-                        "status": "success" if int(status_hex, 16) == 1 else "reverted",
-                        "gas_used": gas_used,
-                        "tx_fee_formatted": format_value(gas_used * gas_price, 18) + f" {chain_obj.native_token}",
-                        "log_count": log_count,
-                        "_note": f"Large tx ({log_count} logs) — run 'meat tx {tx_hash}' for full decode",
-                    }
-                    evidence.save("tx", tx_hash, tx_data, chain)
-                else:
-                    tx_data = _build_tx_result(
-                        raw_tx, raw_receipt, chain_obj, chain,
-                        rpc, explorer, skip_log_decode=True,
-                    )
-                    evidence.save("tx", tx_hash, tx_data, chain)
-            except Exception:
-                pass
-
-    # 3. Fetch source code for victim contracts
-    if explorer:
-        for addr, info in addresses.items():
-            if info.get("role") not in ("victim",):
-                continue
-            if evidence.exists("source", addr.lower()):
-                continue
-            try:
-                src_data = explorer.get_source_code(addr)
-                if src_data and src_data.get("SourceCode"):
-                    evidence.save("source", addr.lower(), {
-                        "address": addr,
-                        "contract_name": src_data.get("ContractName", ""),
-                        "compiler_version": src_data.get("CompilerVersion", ""),
-                        "source_code": src_data.get("SourceCode", ""),
-                        "abi": src_data.get("ABI", ""),
-                    }, chain)
-            except Exception:
-                pass
-
-    # 4. Flow graph — only auto-build for key compromise (EOA attacker, fund tracing)
-    # For smart contract exploits, flow graph should be built via /meat-trace
-    exploit_type = case_json.get("exploit_type", "")
-    if exploit_type in ("key_compromise", "approval_abuse"):
-        flow_dir = case_dir / "evidence" / "flow"
-        if not flow_dir.exists() or not list(flow_dir.glob("*.json")):
-            collector_addrs = [a for a, info in addresses.items()
-                               if info.get("role") in ("collector",)]
-            if collector_addrs and (rpc or explorer):
-                try:
-                    from meat.trace import build_flow_graph
-                    root = collector_addrs[0]
-                    graph = build_flow_graph(root, explorer, chain, depth=2, rpc=rpc)
-                    result = graph.to_dict()
-                    result["root"] = root
-                    result["chain"] = chain
-                    result["depth"] = 2
-                    evidence.save("flow", root.lower(), result, chain)
-                except Exception:
-                    pass
-
-    # 5. Classify addresses that lack classify data
-    for addr, info in addresses.items():
-        if evidence.exists("classify", addr.lower()):
-            continue
-        classify_data = info.get("classify")
-        if classify_data:
-            evidence.save("classify", addr.lower(), classify_data, chain)
-        elif rpc or explorer:
-            try:
-                from meat.classify import classify_address
-                result = classify_address(addr, rpc, explorer)
-                if result:
-                    evidence.save("classify", addr.lower(), result, chain)
-            except Exception:
-                pass
+                  rpc, explorer, chain: str):
+    """Report generation does NOT collect data. All evidence must be gathered
+    during investigation (meat tx, meat source, meat classify, meat calltrace,
+    meat flow, etc.) before running meat report."""
+    pass
 
 
 def _parse_journal(journal_path: Path) -> list[dict]:
@@ -926,7 +778,26 @@ def _parse_call_sequence(trace_data: dict, addresses: dict,
         sel_path = case_dir / "evidence" / "selector_map.json"
         if sel_path.exists():
             try:
-                evidence_selectors = json.loads(sel_path.read_text())
+                raw = json.loads(sel_path.read_text())
+                for sel, val in raw.items():
+                    if isinstance(val, dict):
+                        evidence_selectors[sel] = val.get("name", "")
+                    else:
+                        evidence_selectors[sel] = val
+            except (json.JSONDecodeError, IOError):
+                pass
+
+    # Load decoded calls from evidence/decoded_calls.json
+    from collections import defaultdict
+    decoded_lookup = defaultdict(list)
+    if case_dir:
+        decoded_path = case_dir / "evidence" / "decoded_calls.json"
+        if decoded_path.exists():
+            try:
+                decoded_doc = json.loads(decoded_path.read_text())
+                for dc in decoded_doc.get("calls", []):
+                    key = (dc.get("from", ""), dc.get("to", ""), dc.get("selector", ""))
+                    decoded_lookup[key].append(dc)
             except (json.JSONDecodeError, IOError):
                 pass
 
@@ -1039,14 +910,24 @@ def _parse_call_sequence(trace_data: dict, addresses: dict,
             except (ValueError, TypeError):
                 val_wei = 0
 
-            calls.append({
+            entry = {
                 "from": from_addr,
                 "to": to_addr,
                 "function": func_name,
                 "depth": depth,
                 "error": error,
                 "value_wei": str(val_wei) if val_wei > 0 else "",
-            })
+            }
+
+            dc_key = (from_addr, to_addr, selector)
+            dc_entries = decoded_lookup.get(dc_key, [])
+            if dc_entries:
+                dc = dc_entries.pop(0)
+                entry["params"] = dc.get("params_formatted") or dc.get("params")
+                entry["effect"] = dc.get("effect", "")
+                entry["signature"] = dc.get("signature", "")
+
+            calls.append(entry)
 
         for sub in call.get("calls", []):
             _walk(sub, depth + 1, from_addr)

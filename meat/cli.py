@@ -1107,6 +1107,7 @@ def calltrace(tx_hash, chain, case):
         meta.warnings.extend(methods_tried)
 
     # Resolve all selectors in the trace and save the map as evidence
+    # Priority: 1) ABI from source evidence (definitive), 2) 4byte registry (guessed)
     selector_map = {}
     if isinstance(trace_data, dict) and "calls" in trace_data:
         unique_sels = set()
@@ -1117,12 +1118,89 @@ def calltrace(tx_hash, chain, case):
             for c in node.get("calls", []):
                 _collect_selectors(c)
         _collect_selectors(trace_data)
+
+        # Pass 1: resolve from source evidence ABIs (definitive)
+        abi_resolved = 0
+        if evidence:
+            abi_selectors = _build_abi_selector_map(evidence)
+            for sel in unique_sels:
+                if sel in abi_selectors:
+                    selector_map[sel] = {"name": abi_selectors[sel], "source": "abi"}
+                    abi_resolved += 1
+
+        # Pass 2: unresolved selectors → 4byte registry (guessed)
+        registry_resolved = 0
         for sel in unique_sels:
-            results = lookup_selector(sel)
-            if results:
-                selector_map[sel] = results[0].split("(")[0]
-        if selector_map:
-            meta.data_sources.append(f"selector_lookup({len(selector_map)} resolved)")
+            if sel not in selector_map:
+                results = lookup_selector(sel)
+                if results:
+                    selector_map[sel] = {"name": results[0].split("(")[0], "source": "4byte"}
+                    registry_resolved += 1
+
+        if abi_resolved:
+            meta.data_sources.append(f"abi_selectors({abi_resolved} resolved)")
+        if registry_resolved:
+            meta.data_sources.append(f"4byte_registry({registry_resolved} guessed)")
+
+    # Decode calldata using ABI evidence
+    decoded_calls = []
+    addr_labels = {}
+    if evidence and isinstance(trace_data, dict) and "calls" in trace_data:
+        address_abis = _build_address_abi_map(evidence)
+        if address_abis:
+            from meat.effects import format_params_human, format_effect
+            addr_labels = _load_case_addr_labels(case)
+
+            # Build a set of all ABIs (direct + via DELEGATECALL targets)
+            # so we can decode calls to proxies using their implementation's ABI
+            all_abis_by_selector = {}
+            for addr, abi in address_abis.items():
+                for entry in abi:
+                    if entry.get("type") == "function":
+                        from eth_utils import keccak as _keccak
+                        inputs = ",".join(i["type"] for i in entry.get("inputs", []))
+                        sig = f"{entry['name']}({inputs})"
+                        sel = "0x" + _keccak(text=sig).hex()[:8]
+                        if sel not in all_abis_by_selector:
+                            all_abis_by_selector[sel] = (abi, addr)
+
+            def _try_decode(to_addr, calldata):
+                abi = address_abis.get(to_addr)
+                if abi:
+                    result = decode_function_input(abi, calldata)
+                    if result and result.get("params") is not None:
+                        return result
+                sel = calldata[:10] if len(calldata) >= 10 else ""
+                if sel in all_abis_by_selector:
+                    impl_abi, _ = all_abis_by_selector[sel]
+                    return decode_function_input(impl_abi, calldata)
+                return None
+
+            def _decode_walk(node):
+                from_addr = (node.get("from") or "").lower()
+                to_addr = (node.get("to") or "").lower()
+                calldata = node.get("input", "")
+                sel = calldata[:10] if len(calldata) >= 10 else ""
+                if to_addr and sel and len(calldata) > 10:
+                    decoded = _try_decode(to_addr, calldata)
+                    if decoded and decoded.get("params") is not None:
+                        fn = decoded["function"]
+                        params_fmt = format_params_human(decoded["params"])
+                        effect = format_effect(fn, params_fmt, addr_labels)
+                        decoded_calls.append({
+                            "from": from_addr,
+                            "to": to_addr,
+                            "selector": sel,
+                            "function": fn,
+                            "signature": decoded.get("signature", ""),
+                            "params": {k: str(v) for k, v in decoded["params"].items()},
+                            "params_formatted": params_fmt,
+                            "effect": effect,
+                        })
+                for c in node.get("calls", []):
+                    _decode_walk(c)
+
+            _decode_walk(trace_data)
 
     result = {"tx_hash": tx_hash, "chain": chain, "trace": trace_data, "_meta": meta.to_dict()}
 
@@ -1138,10 +1216,19 @@ def calltrace(tx_hash, chain, case):
                     pass
             existing.update(selector_map)
             sel_path.write_text(json.dumps(existing, indent=2))
+        if decoded_calls:
+            decoded_path = evidence.evidence_dir / "decoded_calls.json"
+            decoded_path.write_text(json.dumps({
+                "tx_hash": tx_hash,
+                "decoded_count": len(decoded_calls),
+                "calls": decoded_calls,
+            }, indent=2, default=str))
+            meta.evidence_paths.append("evidence/decoded_calls.json")
 
     # Build decoded tree summary for readable output
     if isinstance(trace_data, dict) and "calls" in trace_data:
-        addr_labels = _load_case_addr_labels(case)
+        if not addr_labels:
+            addr_labels = _load_case_addr_labels(case)
         decoded_tree = _decode_trace_tree(trace_data, addr_labels)
         result["decoded_tree"] = decoded_tree
 
@@ -1678,6 +1765,59 @@ def report(case_name, output):
         "case": case_name,
         "output": str(result),
     })
+
+
+def _build_address_abi_map(evidence: EvidenceStore) -> dict[str, list[dict]]:
+    """Build address→parsed ABI map from all source evidence."""
+    abi_map = {}
+    source_dir = evidence.evidence_dir / "source"
+    if not source_dir.exists():
+        return abi_map
+    for fp in source_dir.glob("*.json"):
+        try:
+            with open(fp) as f:
+                envelope = json.load(f)
+            data = envelope.get("data", envelope)
+            addr = fp.stem.lower()
+            abi_raw = data.get("ABI", "")
+            if not abi_raw or abi_raw == "Contract source code not verified":
+                continue
+            abi = json.loads(abi_raw) if isinstance(abi_raw, str) else abi_raw
+            if isinstance(abi, list) and abi:
+                abi_map[addr] = abi
+        except (json.JSONDecodeError, IOError, KeyError):
+            continue
+    return abi_map
+
+
+def _build_abi_selector_map(evidence: EvidenceStore) -> dict[str, str]:
+    """Build a selector→function_name map from all source evidence ABIs."""
+    from eth_utils import keccak as eth_keccak
+    sel_map = {}
+    source_dir = evidence.evidence_dir / "source"
+    if not source_dir.exists():
+        return sel_map
+    for fp in source_dir.glob("*.json"):
+        try:
+            with open(fp) as f:
+                envelope = json.load(f)
+            data = envelope.get("data", envelope)
+            abi_raw = data.get("ABI", "")
+            if not abi_raw or abi_raw == "Contract source code not verified":
+                continue
+            abi = json.loads(abi_raw) if isinstance(abi_raw, str) else abi_raw
+            for entry in abi:
+                if entry.get("type") != "function":
+                    continue
+                name = entry.get("name", "")
+                inputs = ",".join(i["type"] for i in entry.get("inputs", []))
+                sig = f"{name}({inputs})"
+                sel = "0x" + eth_keccak(text=sig).hex()[:8]
+                if sel not in sel_map:
+                    sel_map[sel] = name
+        except (json.JSONDecodeError, IOError, KeyError):
+            continue
+    return sel_map
 
 
 def _hex_to_int(val) -> int | None:

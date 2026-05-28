@@ -1348,14 +1348,42 @@ hm.appendChild(badge(C.status, C.status === 'active' ? 'yellow' : 'green'));
 
       const funcLabel = c.function || '';
       const errSuffix = c.error ? ' REVERT' : '';
+      const hasDetail = c.params || c.effect;
       const label = el('div', {
         class: 'seq-arrow-label',
         text: funcLabel + errSuffix,
         style: `left: ${arrowW / 2 - 30}px; color: ${arrowColor}; max-width: ${arrowW - 10}px; overflow: hidden; text-overflow: ellipsis;`,
-        title: `${contracts[c.from]?.label || shortAddr(c.from)} → ${contracts[c.to]?.label || shortAddr(c.to)}: ${funcLabel}`,
+        title: c.effect || `${contracts[c.from]?.label || shortAddr(c.from)} → ${contracts[c.to]?.label || shortAddr(c.to)}: ${funcLabel}`,
       });
       arrow.appendChild(label);
       stepRow.appendChild(arrow);
+
+      if (hasDetail) {
+        stepRow.style.cursor = 'pointer';
+        let detailEl = null;
+        stepRow.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (detailEl) { detailEl.remove(); detailEl = null; return; }
+          detailEl = el('div', {style: 'background: var(--surface); border: 1px solid var(--border); border-radius: 6px; margin: 2px 26px 6px; padding: 10px 12px; font-size: 11px;'});
+          if (c.effect) {
+            detailEl.appendChild(el('div', {text: c.effect, style: 'color: var(--accent); font-style: italic; margin-bottom: 8px;'}));
+          }
+          if (c.params && typeof c.params === 'object') {
+            const grid = el('div', {style: 'display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; margin-bottom: 6px;'});
+            Object.entries(c.params).forEach(([k, v]) => {
+              grid.appendChild(el('div', {text: k, style: 'color: var(--text-dim); font-family: var(--font-mono);'}));
+              const valEl = el('div', {style: 'font-family: var(--font-mono); word-break: break-all;'});
+              valEl.textContent = typeof v === 'string' ? v : JSON.stringify(v);
+              grid.appendChild(valEl);
+            });
+            detailEl.appendChild(grid);
+          }
+          if (c.signature) {
+            detailEl.appendChild(el('div', {text: c.signature, style: 'font-family: var(--font-mono); font-size: 10px; color: var(--text-dim); margin-top: 4px;'}));
+          }
+          parent.insertBefore(detailEl, stepRow.nextSibling);
+        });
+      }
       parent.appendChild(stepRow);
     }
 
