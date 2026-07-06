@@ -70,6 +70,11 @@ python3 -m meat classify 0xAttacker...   # address type, admin, proxy, balances
 python3 -m meat flow 0xAttacker...       # fund flow graph
 python3 -m meat source 0xVictim...       # contract source code
 
+# Follow the money & gate the conclusion (correctness)
+python3 -m meat profit 0xAttacker... --block 25471345   # find the real money-out tx
+python3 -m meat provenance 0xHolder...                  # single-source = sybil, not a victim
+python3 -m meat check 2024-03-13-euler                  # value conservation + loss attribution (exits non-zero on failure)
+
 # Or use the Claude Code skills
 /meat 0xabc123...          # guided analysis
 /meat-recon                # expand from partial info
@@ -97,9 +102,11 @@ python3 -m meat source 0xVictim...       # contract source code
 ┌──────────────────────────▼──────────────────────────────────┐
 │                     CLI Layer (cli.py)                        │
 │                                                              │
-│  quick · tx · classify · flow · calltrace · source · abi     │
-│  txlist · transfers · logs · storage · block · decode        │
-│  case create · case list · case show                         │
+│  quick · tx · classify · calltrace · source · abi · decode   │
+│  txlist · transfers · flow · funder · logs · storage · block │
+│  profit · provenance · check      ← correctness gate         │
+│  btc-tx · btc-trace · thorchain · debridge · orbiter         │
+│  intents · case · label · annotate · report · trace-addresses│
 │                                                              │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌─────────────┐ │
 │  │ _meta    │  │ compact  │  │ evidence │  │ MEAT_CHAIN  │ │
@@ -144,11 +151,13 @@ python3 -m meat source 0xVictim...       # contract source code
 │  ├── journal.md         Append-only investigation log        │
 │  ├── addresses.json     Roles + confidence + evidence refs   │
 │  ├── evidence/          Raw on-chain data (write-once)       │
-│  │   ├── tx/              Transaction data                   │
-│  │   ├── receipt/         Transaction receipts               │
-│  │   ├── trace/           Call traces                        │
-│  │   ├── source/          Verified source code               │
-│  │   └── classify/        Address classifications            │
+│  │   ├── tx/          Transaction data                       │
+│  │   ├── receipt/     Transaction receipts                   │
+│  │   ├── trace/       Call traces                            │
+│  │   ├── source/      Verified source code                   │
+│  │   ├── classify/    Address classifications                │
+│  │   ├── provenance/  Token origin (sybil check)             │
+│  │   └── profit/      Money-out tx resolution                │
 │  ├── findings/          Analysis outputs (cite evidence)     │
 │  │   ├── recon.md         Who attacked whom, how much        │
 │  │   ├── fund-trace.md    Where the money went               │
@@ -191,24 +200,53 @@ Findings ──→ written to cases/<name>/findings/ (cites evidence)
 
 ---
 
-## CLI Commands (14 total)
+## CLI Commands (29 total)
 
+**Core analysis**
 | Command | Purpose |
 |---------|---------|
 | `quick` | **One-shot analysis**: tx hash or URL → decoded summary with USD in ~9 seconds |
 | `tx` | Full tx decode: transfers, approvals, WETH events, net flows, decoded logs, internal txs |
 | `classify` | Address classification: EOA/contract, proxy type, admin roles, LP pair, token balances |
-| `flow` | Fund flow graph (BFS): follows money through swaps, bridges, mixers. Alchemy fast path |
 | `calltrace` | Call trace: debug RPC → Tenderly → cast → explorer fallback chain |
 | `source` | Verified source code (Etherscan → Sourcify fallback) |
 | `abi` | Contract ABI with proxy resolution |
+| `decode` | Decode calldata or function selector |
+
+**History & fund tracing**
+| Command | Purpose |
+|---------|---------|
 | `txlist` | Transaction history for an address |
 | `transfers` | ERC20 token transfers for an address |
+| `flow` | Fund flow graph (BFS): follows money through swaps, bridges, mixers. Alchemy fast path |
+| `funder` | First gas-funding source(s) — sybil clustering |
 | `logs` | Event log search by signature or topic |
 | `storage` | Storage slot read with `--compare-block` for before/after diffs |
 | `block` | Block info with transaction list |
-| `decode` | Decode calldata or function selector |
-| `case` | Case management: `create`, `list`, `show` |
+
+**Correctness gate** — *don't conclude an exploit without finding who lost the money*
+| Command | Purpose |
+|---------|---------|
+| `profit` | Find the tx that realizes the largest net stablecoin gain — **the money-out tx is rarely the one you were handed** |
+| `provenance` | Earliest inbound source of each token — a single-source "holder" is a sybil red flag, not a victim |
+| `check` | Hard gate (non-zero exit): value conservation, **loss attribution**, provenance, money-out-tx-fetched. Runs from a Stop hook |
+
+**Cross-chain fund tracing**
+| Command | Purpose |
+|---------|---------|
+| `btc-tx` / `btc-trace` | Bitcoin tx + deterministic peel-chain following (Blockstream) |
+| `thorchain` | THORChain/Maya memo decode + Midgard (`--protocol maya`) |
+| `debridge` / `orbiter` | deBridge DLN / Orbiter cross-chain order resolution |
+| `intents` | Cross-reference an address against known bridge/intent registries |
+
+**Case management**
+| Command | Purpose |
+|---------|---------|
+| `case` | Case lifecycle: `create`, `list`, `show` |
+| `label` | Assign role / name / confidence to an address |
+| `annotate` | Attach phase + purpose notes to call-trace nodes |
+| `report` | Generate an HTML report from collected evidence |
+| `trace-addresses` | Extract all unique addresses from a saved call trace |
 
 ### Output features
 
@@ -257,6 +295,28 @@ Set `MEAT_CHAIN` and `MEAT_CASE` env vars to skip `--chain` and `--case` flags.
 "Dai": {"raw": "8877507348306697267428294", "formatted": "8877507.348306", "decimals": 18, "usd_value": "$8,780,121.09"}
 ```
 
+### Correctness gate (`meat check`)
+
+The most common way an exploit analysis goes wrong is concluding *what happened* without proving *who
+lost the money* — mistaking a mechanism (a permit, a transfer) for the theft, or stopping at the tx
+you were handed instead of the tx where value is realized. `meat check` turns that discipline into a
+deterministic gate that **exits non-zero** and blocks the conclusion until it holds. It runs
+automatically from a Stop hook, so a wrong write-up fails a gate rather than a memory check.
+
+Invariants enforced, per declared attack/monetization tx:
+- **Value conservation** — every address with a large net *priced* (stablecoin/ETH) swing must be labeled.
+- **Loss attribution** — the attacker's gain must be accounted for by a `victim`-role address: either a
+  matching priced loss, or **absorbing an illiquid token the attacker offloaded onto it** (the classic
+  NAV/oracle-drain signature). Dump recipients are surfaced as `victim_candidates` and the gate fails
+  until the true victim is investigated and labeled.
+- **Provenance** — every attacker/victim label has a `meat provenance` record (or an explicit waiver).
+- **Money-out fetched** — decisive txs exist in `evidence/tx/` in full (not `--compact`), and any tx
+  `meat profit` flagged as the largest realized gain is declared decisive.
+
+Supporting commands: `meat profit` finds the real money-out tx; `meat provenance` distinguishes
+sybils (single-source token holders) from genuine victims. The `/meat` skill wires all three into its
+workflow (find the payout → verify provenance → gate before writing findings).
+
 ---
 
 ## Supported Chains
@@ -289,12 +349,14 @@ python3 -m pytest tests/test_integration.py -v
 python3 -m pytest tests/ -v
 ```
 
-31 tests validate against the Euler Finance hack ($200M, March 2023):
+40 tests, mostly validating against the Euler Finance hack ($200M, March 2023):
 - Input parsing (URLs, addresses, noisy text)
 - ABI decoding (selectors, Transfer/Approval/WETH events)
 - Transaction decode (token transfers, net flows, DAI movements)
 - Address classification (EOA, verified proxy, known CEX)
 - Quick analysis pipeline (end-to-end in one command)
+- Correctness gate (offline): provenance/sybil detection, profit ranking, and the `check`
+  loss-attribution invariants (unlabeled dump-recipient → fail; victim absorbs dumped asset → pass)
 
 ---
 
@@ -303,7 +365,7 @@ python3 -m pytest tests/ -v
 ```
 meat-evm/
 ├── meat/                    Python CLI package
-│   ├── cli.py                 All 14 commands + helpers (~1100 LOC)
+│   ├── cli.py                 All 29 commands + helpers (~2400 LOC)
 │   ├── config.py              Chain config + env loading
 │   ├── rpc.py                 JSON-RPC + Alchemy enhanced methods
 │   ├── explorer.py            Etherscan V2 API + rate limiter + retry
@@ -311,20 +373,25 @@ meat-evm/
 │   ├── decode.py              ABI/event decoding + Sourcify signatures
 │   ├── classify.py            Address classification (proxy, admin, LP, balance)
 │   ├── trace.py               Fund flow graph (Alchemy fast path + explorer)
+│   ├── analysis.py            Correctness gate: provenance, profit, check (pure + offline)
+│   ├── crosschain.py          Bitcoin peel-chain + THORChain/deBridge/Orbiter tracing
+│   ├── report.py              HTML report generator
 │   ├── evidence.py            Write-once evidence store
 │   ├── case.py                Case lifecycle management
 │   └── parse.py               Input parsing (URLs, hashes, batch, noisy text)
-├── .claude/skills/          Claude Code skill files
-│   ├── meat.md                Main entry point
-│   ├── meat-recon.md          Expand from partial info
-│   ├── meat-trace.md          Fund tracing
-│   ├── meat-analyze.md        Vulnerability analysis
-│   ├── meat-poc.md            Foundry PoC
-│   └── meat-monitor.md       Case monitoring
+├── .claude/
+│   ├── skills/               Claude Code skills (each a dir with SKILL.md)
+│   │   ├── meat/               Main entry point
+│   │   ├── meat-recon/         Expand from partial info
+│   │   ├── meat-trace/         Fund tracing
+│   │   ├── meat-analyze/       Vulnerability analysis
+│   │   ├── meat-poc/           Foundry PoC
+│   │   └── meat-monitor/       Case monitoring
+│   └── hooks/                Stop hook that runs `meat check` at wrap-up
 ├── chains.yaml              Multi-chain configuration
-├── labels/                  Known address database (50+ entities)
+├── labels/                  Known address database
 ├── foundry/                 Foundry workspace for PoC reproduction
 ├── cases/                   Per-case investigation data (gitignored)
-├── tests/                   Unit + integration tests
+├── tests/                   Unit + integration tests (incl. offline gate tests)
 └── design_review/           Architecture decision records
 ```
