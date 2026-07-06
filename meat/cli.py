@@ -17,6 +17,7 @@ from meat.decode import (
 )
 from meat.evidence import EvidenceStore
 from meat.classify import classify_address
+from meat import analysis
 
 
 class Meta:
@@ -1584,7 +1585,7 @@ def label(address, role, name, confidence, note, source, case, chain):
 
     c.append_journal(f"Label: {address[:16]}... → role={existing.get('role')}, name={name or '—'}, source={source or '—'}")
 
-    _output({
+    out = {
         "labeled": True,
         "address": addr_key,
         "role": existing.get("role"),
@@ -1592,7 +1593,188 @@ def label(address, role, name, confidence, note, source, case, chain):
         "confidence": existing.get("confidence"),
         "note": note,
         "source": source,
-    })
+    }
+
+    # Guard: attacker/victim labels must have their provenance verified. Warn
+    # here (labeling often precedes the dig); `meat check` enforces it hard.
+    if existing.get("role") in analysis.VALUE_ROLES:
+        prov_dir = c.case_dir / "evidence" / "provenance"
+        al = addr_key.lower()
+        has_prov = prov_dir.exists() and any(
+            p.stem.lower().startswith(al) for p in prov_dir.glob("*.json")
+        )
+        if not (has_prov or existing.get("provenance") or existing.get("provenance_waived")):
+            out["warning"] = (
+                f"No provenance recorded for this {existing.get('role')}. "
+                f"Run `meat provenance {addr_key}` to verify where its tokens came "
+                f"from — this label will fail `meat check` until you do."
+            )
+
+    _output(out)
+
+
+@cli.command("provenance")
+@click.argument("address")
+@click.option("--token", "-t", help="Only trace this token contract (else all tokens received)")
+@click.option("--chain", "-c", help="Chain name")
+@click.option("--case", help="Case name for evidence storage")
+def provenance(address, token, chain, case):
+    """Where did an address FIRST receive a token from? Answers the load-bearing
+    question before labeling anyone attacker/victim: is this a real holder or a
+    pre-seeded sybil? Flags tokens received from a single source."""
+    chain_cfg = _get_chain_config(chain)
+    explorer = _get_explorer(chain_cfg)
+    meta = Meta()
+    if not explorer:
+        _error(f"No explorer API key configured for {chain}")
+    meta.data_sources.append("explorer")
+
+    evidence = _get_evidence(case)
+
+    all_transfers: list[dict] = []
+    try:
+        for page in range(1, 11):  # up to 1000 records, ascending
+            batch = explorer.get_token_transfers(
+                address=address, contract=token,
+                page=page, offset=100, sort="asc",
+            )
+            all_transfers.extend(batch)
+            if len(batch) < 100:
+                break
+    except ExplorerError as e:
+        _error(f"Explorer error: {e}")
+
+    sources = analysis.first_inbound_sources(all_transfers, address, token)
+    single_source_tokens = [s for s in sources if s["single_source"]]
+
+    result = {
+        "address": address,
+        "chain": chain_cfg.name,
+        "tokens_received": len(sources),
+        "provenance": sources,
+        "single_source_tokens": [s["token_symbol"] for s in single_source_tokens],
+        "note": (
+            "Tokens received from a SINGLE source are a red flag for sybil/"
+            "pre-seeded wallets — verify the source before labeling as victim."
+            if single_source_tokens else
+            "Multiple inbound sources — consistent with an organic holder."
+        ),
+        "_meta": meta.to_dict(),
+    }
+
+    if evidence:
+        key = address.lower() + (f"_{token.lower()}" if token else "")
+        rel, _new = evidence.save("provenance", key, result, chain_cfg.name)
+        meta.evidence_paths.append(rel)
+        result["_meta"] = meta.to_dict()
+
+    _output(result)
+
+
+@cli.command("profit")
+@click.argument("initiator")
+@click.option("--block", type=int, help="Attack block to center the scan on")
+@click.option("--before", default=2, help="Blocks before --block to include")
+@click.option("--after", default=1000, help="Blocks after --block to include")
+@click.option("--start-block", "start_block_opt", type=int, help="Explicit start block (overrides --block window)")
+@click.option("--end-block", "end_block_opt", type=int, help="Explicit end block")
+@click.option("--top", default=5, help="How many top txs to show")
+@click.option("--chain", "-c", help="Chain name")
+@click.option("--case", help="Case name for evidence storage")
+def profit(initiator, block, before, after, start_block_opt, end_block_opt, top, chain, case):
+    """Find the tx that realizes the largest net stablecoin gain for an address.
+
+    Prevents 'I stopped at the tx you pasted': the money is often taken out a few
+    txs later. This finds that tx and tells you to read it IN FULL.
+    """
+    chain_cfg = _get_chain_config(chain)
+    explorer = _get_explorer(chain_cfg)
+    meta = Meta()
+    if not explorer:
+        _error(f"No explorer API key configured for {chain}")
+    meta.data_sources.append("explorer")
+
+    if start_block_opt is not None:
+        start_block = start_block_opt
+        end_block = end_block_opt if end_block_opt is not None else 99999999
+    elif block is not None:
+        start_block = max(0, block - before)
+        end_block = block + after
+    else:
+        start_block, end_block = 0, 99999999
+
+    evidence = _get_evidence(case)
+
+    all_transfers: list[dict] = []
+    try:
+        for page in range(1, 21):  # up to 2000 records
+            batch = explorer.get_token_transfers(
+                address=initiator, start_block=start_block, end_block=end_block,
+                page=page, offset=100, sort="asc",
+            )
+            all_transfers.extend(batch)
+            if len(batch) < 100:
+                break
+    except ExplorerError as e:
+        _error(f"Explorer error: {e}")
+
+    by_tx = analysis.per_tx_net(all_transfers, initiator)
+    ranked = analysis.rank_profit(by_tx)
+    top_txs = ranked[:top]
+
+    realized = top_txs[0] if top_txs and top_txs[0]["net_stablecoin_usd"] > 0 else None
+
+    result = {
+        "initiator": initiator,
+        "chain": chain_cfg.name,
+        "scanned_block_range": [start_block, end_block],
+        "txs_with_flows": len(ranked),
+        "realized_profit_tx": realized,
+        "top_txs_by_net_stablecoin": top_txs,
+        "next_step": (
+            f"Read the money-out tx IN FULL: `meat tx {realized['hash']}` "
+            f"(NOT --compact) and trace who lost it."
+            if realized else
+            "No positive net stablecoin tx found in range — widen --after or check native/ETH."
+        ),
+        "_meta": meta.to_dict(),
+    }
+
+    if evidence:
+        rel, _new = evidence.save("profit", initiator.lower(), result, chain_cfg.name)
+        meta.evidence_paths.append(rel)
+        result["_meta"] = meta.to_dict()
+
+    _output(result)
+
+
+@cli.command("check")
+@click.argument("case_name", required=False)
+@click.option("--min-usd", default=100000.0, help="Net stablecoin swing that must be labeled (default 100k)")
+@click.option("--strict", is_flag=True, help="Exit non-zero on warnings too")
+def check(case_name, min_usd, strict):
+    """Gate a case against correctness invariants before findings are 'done'.
+
+    Enforces: money-out txs fetched in full, value conservation (every large net
+    stablecoin winner/loser is labeled; attacker gains matched by labeled
+    losers), provenance recorded for attacker/victim labels, and earned
+    negatives. Exits non-zero on violations so wrong conclusions fail a gate
+    instead of a memory check.
+    """
+    config = get_config()
+    case_name = _resolve_case(case_name)
+    if not case_name:
+        _error("case name required (or set MEAT_CASE)")
+
+    case_dir = config.cases_dir / case_name
+    if not (case_dir / "case.json").exists():
+        _error(f"Case '{case_name}' not found at {case_dir}")
+
+    report = analysis.check_case(case_dir, min_usd=min_usd)
+    _output(report)
+
+    failed = not report["passed"] or (strict and report["warnings"])
+    sys.exit(1 if failed else 0)
 
 
 @cli.command("funder")

@@ -2,5 +2,18 @@
   "permissions": {
     "allow": [],
     "deny": []
+  },
+  "hooks": {
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/meat_check.sh"
+          }
+        ]
+      }
+    ]
   }
 }
