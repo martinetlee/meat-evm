@@ -1519,6 +1519,246 @@ def case_create(name, chain):
     })
 
 
+def _registry_path():
+    """Path to labels/known_addresses.json (repo-level label registry)."""
+    from pathlib import Path
+    p = Path(__file__).resolve().parent.parent / "labels" / "known_addresses.json"
+    return p if p.exists() else None
+
+
+@cli.command("btc-tx")
+@click.argument("txid")
+@click.option("--case", help="Case name for evidence storage (or set MEAT_CASE)")
+def btc_tx_cmd(txid, case):
+    """Fetch a Bitcoin transaction: inputs, outputs, OP_RETURN (Blockstream)."""
+    from meat.crosschain import btc_tx, CrossChainError
+    txid = txid.lower().strip()
+    if len(txid) != 64 or any(c not in "0123456789abcdef" for c in txid):
+        _error(f"Invalid Bitcoin txid: {txid}")
+    meta = Meta()
+    meta.data_sources.append("blockstream")
+    try:
+        result = btc_tx(txid)
+    except CrossChainError as e:
+        _error(str(e))
+    evidence = _get_evidence(case)
+    if evidence:
+        p, new = evidence.save("btc_tx", txid, result, "bitcoin")
+        meta.evidence_paths.append(f"{p} ({'new' if new else 'cached'})")
+    result["_meta"] = meta.to_dict()
+    _output(result)
+
+
+@cli.command("btc-trace")
+@click.argument("address")
+@click.option("--max-hops", default=20, help="Max hops to follow (default: 20)")
+@click.option("--follow", type=click.Choice(["largest", "all"]), default="largest",
+              help="largest=peel-chain (single biggest output/hop); all=every output >= --min-sat")
+@click.option("--min-sat", default=10000, help="Min output to follow when --follow all")
+@click.option("--max-branch", default=3, help="Max branches per address when --follow all")
+@click.option("--case", help="Case name for evidence storage (or set MEAT_CASE)")
+def btc_trace_cmd(address, max_hops, follow, min_sat, max_branch, case):
+    """Trace Bitcoin funds forward hop-by-hop; flags dormant/service/OP_RETURN endpoints.
+
+    Deterministic replacement for hand-tracing BTC peel chains. Stops each branch at a dormant
+    (unspent) endpoint, a consolidation sweep (likely a service), a registry-known service, or
+    --max-hops. See meat-trace Step 6/6b.
+    """
+    from meat.crosschain import btc_trace, CrossChainError
+    address = address.strip()
+    meta = Meta()
+    meta.data_sources.append("blockstream")
+    try:
+        result = btc_trace(address, max_hops=max_hops, follow=follow, min_sat=min_sat,
+                           max_branch=max_branch, registry_path=_registry_path())
+    except CrossChainError as e:
+        _error(str(e))
+    # surface the honest-conclusion reminder (Step 6b) when a branch hits a service
+    if result["summary"]["service_endpoints"]:
+        meta.warnings.append("Reached a service/consolidation endpoint — custody hand-off, NOT a "
+                             "confirmed destination. Cross-reference intents/bridge order books "
+                             "(e.g. NEAR Intents) before concluding where value went. See Step 6b.")
+    evidence = _get_evidence(case)
+    if evidence:
+        p, new = evidence.save("btc_trace", address, result, "bitcoin")
+        meta.evidence_paths.append(f"{p} ({'new' if new else 'cached'})")
+    result["_meta"] = meta.to_dict()
+    _output(result)
+
+
+@cli.command("thorchain")
+@click.argument("tx_or_memo")
+@click.option("--protocol", type=click.Choice(["thorchain", "maya"]), default="thorchain",
+              help="THORChain or its Maya fork (same memo format + Midgard API)")
+@click.option("--chain", "-c", help="EVM chain of the deposit tx (default: MEAT_CHAIN)")
+@click.option("--case", help="Case name for evidence storage (or set MEAT_CASE)")
+def thorchain_cmd(tx_or_memo, protocol, chain, case):
+    """Decode a THORChain/Maya swap: memo (deterministic) + best-effort output resolution (Midgard).
+
+    Accepts an EVM deposit tx hash (pulls the memo from depositWithExpiry calldata) OR a raw memo
+    string like '=:b:bc1q...:limit:affiliate:bps'. Tells you the destination chain/asset/address.
+    Use --protocol maya for Maya Protocol (Dash/Cardano/etc.).
+    """
+    from meat.crosschain import decode_thor_memo, midgard_resolve, MIDGARD_BY_PROTOCOL
+    meta = Meta()
+    result = {}
+    memo = None
+    tx_hash = None
+
+    if tx_or_memo.startswith("0x") and len(tx_or_memo) == 66:
+        tx_hash = tx_or_memo.lower()
+        chain_cfg = _get_chain_config(chain)
+        rpc = _get_rpc(chain_cfg)
+        if not rpc:
+            _error(f"No RPC configured for {chain} — needed to read the deposit tx memo")
+        try:
+            tx_data = rpc.get_transaction(tx_hash)
+        except RPCError as e:
+            _error(f"RPC error: {e}")
+        if not tx_data:
+            _error(f"Transaction {tx_hash} not found")
+        calldata = tx_data.get("input") or tx_data.get("data") or ""
+        thor_abi = [{"type": "function", "name": "depositWithExpiry",
+                     "inputs": [{"name": "vault", "type": "address"}, {"name": "asset", "type": "address"},
+                                {"name": "amount", "type": "uint256"}, {"name": "memo", "type": "string"},
+                                {"name": "expiry", "type": "uint256"}]},
+                    {"type": "function", "name": "deposit",
+                     "inputs": [{"name": "vault", "type": "address"}, {"name": "asset", "type": "address"},
+                                {"name": "amount", "type": "uint256"}, {"name": "memo", "type": "string"}]}]
+        decoded = decode_function_input(thor_abi, calldata)
+        if not decoded or not decoded.get("params"):
+            _error("Could not decode a THORChain deposit memo from this tx (not a deposit/depositWithExpiry call?)")
+        params = decoded["params"]
+        memo = params.get("memo")
+        result["deposit_tx"] = tx_hash
+        result["vault"] = params.get("vault")
+        result["asset_deposited"] = params.get("asset")
+        result["amount_deposited"] = params.get("amount")
+        meta.data_sources.append("rpc")
+    else:
+        memo = tx_or_memo
+
+    if not memo:
+        _error("No memo found to decode")
+    result["memo_decoded"] = decode_thor_memo(memo)
+
+    result["protocol"] = protocol
+    # best-effort: resolve the actual output on the destination chain
+    if tx_hash:
+        out = midgard_resolve(tx_hash, base_url=MIDGARD_BY_PROTOCOL[protocol])
+        if out:
+            result["output_resolved"] = out
+            meta.data_sources.append("midgard")
+        else:
+            meta.warnings.append("Midgard did not index this action (common for older/pruned swaps) — "
+                                 "memo decode above still tells you the intended destination; confirm "
+                                 "the output on the destination chain (e.g. `meat btc-trace <dest_address>`).")
+
+    evidence = _get_evidence(case)
+    if evidence and tx_hash:
+        p, new = evidence.save("thorchain", tx_hash, result, chain or "ethereum")
+        meta.evidence_paths.append(f"{p} ({'new' if new else 'cached'})")
+    result["_meta"] = meta.to_dict()
+    _output(result)
+
+
+@cli.command("intents")
+@click.argument("address")
+def intents_cmd(address):
+    """Cross-reference an address against known cross-chain intents/bridge solvers (Step 6b).
+
+    NEAR Intents' explorer has no clean public API (auth-gated), so this does the DETERMINISTIC
+    half — checks the label registry for a known solver/bridge and emits the explorer URL for a
+    manual cross-reference. A registry MISS is NOT a clearance (Step 6b epistemic rule).
+    """
+    from urllib.parse import quote
+    meta = Meta()
+    reg_path = _registry_path()
+    hit = None
+    if reg_path:
+        import json as _json
+        reg = _json.loads(reg_path.read_text())
+        for cat, v in reg.items():
+            if isinstance(v, dict) and not cat.startswith("_"):
+                for a, name in v.items():
+                    if a.lower() == address.lower():
+                        hit = {"category": cat, "name": name}
+    result = {
+        "address": address,
+        "registry_hit": hit,
+        "resolved": bool(hit and hit["category"] in ("intents_solvers", "bridges", "mixers", "no_kyc_swap")),
+        "manual_crossref": {
+            "near_intents_explorer": f"https://explorer.near-intents.org/?search={quote(address)}",
+            "note": "NEAR Intents explorer is a client-side SPA / auth-gated API — confirm the intent "
+                    "(source+dest chain/asset/amount/tx) by hand. Also watch THORChain, Chainflip, "
+                    "Maya, deBridge, Across, Relay, LI.FI, Socket/Bungee, Squid.",
+        },
+        "epistemic_rule": "A registry miss is NOT a clearance — the list is always incomplete and "
+                          "opaque rails publish nothing. If unresolved at a custody hand-off, report "
+                          "'unresolved / possible off-chain exit', never a fabricated destination.",
+    }
+    result["_meta"] = meta.to_dict()
+    _output(result)
+
+
+@cli.command("debridge")
+@click.argument("tx_hash")
+@click.option("--case", help="Case name for evidence storage (or set MEAT_CASE)")
+def debridge_cmd(tx_hash, case):
+    """Resolve a deBridge DLN cross-chain order by its source creation tx (stats-api.dln.trade).
+
+    Returns give/take chain+asset+amount, destination recipient, and BOTH source & destination tx
+    hashes — jump to the destination chain and keep tracing. See meat-trace Step 6b.
+    """
+    from meat.crosschain import debridge_resolve
+    tx_hash = tx_hash.lower().strip()
+    meta = Meta()
+    meta.data_sources.append("debridge_dln")
+    result = debridge_resolve(tx_hash)
+    if result is None:
+        result = {"tx": tx_hash, "resolved": False,
+                  "note": "Not found as a deBridge DLN order (wrong protocol, or not indexed)."}
+    else:
+        result["tx"] = tx_hash
+        result["resolved"] = True
+        evidence = _get_evidence(case)
+        if evidence:
+            p, new = evidence.save("debridge", tx_hash, result, "cross-chain")
+            meta.evidence_paths.append(f"{p} ({'new' if new else 'cached'})")
+    result["_meta"] = meta.to_dict()
+    _output(result)
+
+
+@cli.command("orbiter")
+@click.argument("tx_hash")
+@click.option("--case", help="Case name for evidence storage (or set MEAT_CASE)")
+def orbiter_cmd(tx_hash, case):
+    """Confirm an Orbiter Finance transfer + source facts (api.orbiter.finance).
+
+    Orbiter's public API is source-side only (no destination tx) — this confirms the hand-off,
+    amount and direction; the paired transfer must be found on the target chain. See Step 6b.
+    """
+    from meat.crosschain import orbiter_resolve
+    tx_hash = tx_hash.lower().strip()
+    meta = Meta()
+    meta.data_sources.append("orbiter")
+    result = orbiter_resolve(tx_hash)
+    if result is None:
+        result = {"tx": tx_hash, "resolved": False,
+                  "note": "Not found as an Orbiter transfer (wrong protocol, or not indexed)."}
+    else:
+        result["tx"] = tx_hash
+        result["resolved"] = True
+        meta.warnings.append("Orbiter destination tx is NOT in the public API — cross-chain hand-off; "
+                             "find the paired payout on the target chain (Maker EOA). See Step 6b.")
+        evidence = _get_evidence(case)
+        if evidence:
+            p, new = evidence.save("orbiter", tx_hash, result, "cross-chain")
+            meta.evidence_paths.append(f"{p} ({'new' if new else 'cached'})")
+    result["_meta"] = meta.to_dict()
+    _output(result)
+
+
 @cli.command("label")
 @click.argument("address")
 @click.option("--role", "-r", help="Role: victim, attacker, collector, funder, exchange, mixer, bridge, intermediate")

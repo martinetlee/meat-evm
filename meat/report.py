@@ -69,7 +69,10 @@ def _build_report_data(case_dir: Path) -> dict:
     evidence_index = _build_evidence_index(evidence_dir)
 
     transactions = _extract_transactions(evidence_data)
-    flow = _extract_flow(evidence_data, addresses, chain_name, native_token, rpc,
+    # Report generation is presentation-only: render the flow from pre-collected
+    # evidence (meat flow already captured nodes/edges). No RPC here — it is slow,
+    # can rate-limit/timeout, and violates the "report = presentation only" rule.
+    flow = _extract_flow(evidence_data, addresses, chain_name, native_token, None,
                          case_created)
     analysis = _extract_analysis(case_dir, evidence_data, addresses, evidence_data)
 
@@ -200,7 +203,21 @@ def _extract_flow(evidence_data: dict, addresses: dict,
     flow_data = evidence_data.get("flow", {})
     if not flow_data:
         return None
-    for key, data in flow_data.items():
+    # Prefer the flow rooted at an attacker/collector address. Incidental flows
+    # captured while tracing (e.g. a funder's own graph) must not shadow it — and
+    # processing a large unrelated graph would also blow up report generation.
+    attacker_addrs = {a.lower() for a, i in addresses.items()
+                      if i.get("role") in ("attacker", "collector", "root")}
+
+    def _is_attacker_rooted(key, data):
+        if key.lower() in attacker_addrs:
+            return True
+        root = (data.get("root") or "").lower() if isinstance(data, dict) else ""
+        return root in attacker_addrs
+
+    ordered = sorted(flow_data.items(),
+                     key=lambda kv: 0 if _is_attacker_rooted(*kv) else 1)
+    for key, data in ordered:
         if isinstance(data, dict) and "nodes" in data:
             enriched = _enrich_flow_nodes(data, addresses)
             if rpc and rpc.is_alchemy:
@@ -210,6 +227,9 @@ def _extract_flow(evidence_data: dict, addresses: dict,
             if rpc:
                 _fetch_node_balances(filtered, rpc, native_token)
                 _compute_infra_scores(filtered, rpc, case_created, addresses=addresses)
+            _classify_flow_edges(filtered, addresses, native_token)
+            _prune_flow_noise(filtered, addresses)
+            _flag_cross_chain_exits(filtered)
             return filtered
     return None
 
@@ -228,9 +248,12 @@ def _complete_flow_graph(flow: dict, addresses: dict, rpc: RPCClient):
     root = (flow.get("root") or "").lower()
     if root:
         addrs_to_fetch.add(root)
+    # Only expand attacker-controlled actors (funder/collector). Do NOT expand
+    # the `victim` — a shared protocol/pool contract is a high-degree hub, and
+    # fetching its transfers drags in every unrelated depositor/withdrawer.
     for addr, info in addresses.items():
         role = info.get("role", "")
-        if role in ("victim", "funder", "collector"):
+        if role in ("funder", "collector"):
             addrs_to_fetch.add(addr.lower())
 
     new_edges = []
@@ -581,16 +604,168 @@ def _fetch_node_balances(flow: dict, rpc: RPCClient, native_token: str):
                 pass
 
 
+def _addr_display_name(info: dict) -> str | None:
+    """Human-readable name for an address from its addresses.json entry."""
+    labels = info.get("labels") or []
+    if labels and labels[0]:
+        return str(labels[0])
+    known = (info.get("classify") or {}).get("known_entity")
+    if isinstance(known, dict):
+        return known.get("label")
+    if isinstance(known, str) and known:
+        return known
+    return None
+
+
 def _enrich_flow_nodes(flow: dict, addresses: dict) -> dict:
     addr_roles = {}
+    addr_names = {}
     for addr, info in addresses.items():
         addr_roles[addr.lower()] = info.get("role", "unknown")
+        name = _addr_display_name(info)
+        if name:
+            addr_names[addr.lower()] = name
 
     for node in flow.get("nodes", []):
         addr = node.get("address", "").lower()
         if addr in addr_roles:
             node["role"] = addr_roles[addr]
+        if addr in addr_names and not node.get("label"):
+            node["label"] = addr_names[addr]
 
+    return flow
+
+
+# Canonical wrapped-native token contracts per chain (lowercased).
+_WRAPPED_NATIVE = {
+    "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",  # WETH (ethereum)
+    "0x0d500b1d8e8ef31e21c99d1db9a6444d3adf1270",  # WMATIC (polygon)
+    "0x82af49447d8a07e3bd95bd0d56f35241523fbab1",  # WETH (arbitrum)
+    "0x4200000000000000000000000000000000000006",  # WETH (optimism/base)
+    "0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c",  # WBNB (bsc)
+}
+
+
+def _classify_flow_edges(flow: dict, addresses: dict, native_token: str) -> dict:
+    """Tag each edge with an `op` (swap/unwrap/wrap/mix/bridge) so swaps and
+    wrap/unwraps are legible instead of looking like independent transfers."""
+    meta = {}
+    for addr, info in addresses.items():
+        known = (info.get("classify") or {}).get("known_entity")
+        cat = known.get("category") if isinstance(known, dict) else None
+        meta[addr.lower()] = {
+            "role": info.get("role", ""),
+            "name": (_addr_display_name(info) or "").lower(),
+            "cat": cat or "",
+        }
+
+    _DEX_KEYS = ("uniswap", "poolmanager", "swap router", "curve", "sushi",
+                 "pancake", "balancer", "1inch", "0x protocol", "cowswap",
+                 "paraswap", "odos", "kyber", "aggregat", "dex")
+
+    def is_dex(m):
+        # exploit/laundering endpoints are never swap venues, even if their
+        # name happens to contain "pool" (e.g. "Hinkal Shielded Pool").
+        if m["role"] in ("victim", "attacker", "mixer", "bridge", "funder"):
+            return False
+        if m["cat"] == "dex_routers":
+            return True
+        n = m["name"]
+        if any(k in n for k in _DEX_KEYS):
+            return True
+        # generic "…pool" only counts as a DEX pool when it also names a pair
+        return "pool" in n and "/" in n
+
+    native = {"eth", "matic", "bnb", (native_token or "").lower()}
+
+    for e in flow.get("edges", []):
+        f = (e.get("from") or "").lower()
+        t = (e.get("to") or "").lower()
+        tok = (e.get("token") or "").lower()
+        fm = meta.get(f, {"role": "", "name": "", "cat": ""})
+        tm = meta.get(t, {"role": "", "name": "", "cat": ""})
+        op = ""
+        if tm["role"] == "mixer" or tm["cat"] == "mixers":
+            op = "mix"
+        elif tm["role"] == "bridge" or tm["cat"] == "bridges":
+            op = "bridge"
+        elif f in _WRAPPED_NATIVE and tok in native:
+            op = "unwrap"
+        elif t in _WRAPPED_NATIVE and tok in native:
+            op = "wrap"
+        elif is_dex(fm) or is_dex(tm):
+            op = "swap"
+        if op:
+            e["op"] = op
+    return flow
+
+
+def _flag_cross_chain_exits(flow: dict) -> dict:
+    """Flag flow nodes that are cross-chain/service EXIT points (intents solvers,
+    bridges, mixers) — where funds can 'fly off' with no on-chain link. These are
+    custody hand-offs, NOT destinations: cross-reference the off-chain order book
+    (e.g. NEAR Intents) before concluding where funds went. See meat-trace Step 6b."""
+    try:
+        labels_file = Path(__file__).parent.parent / "labels" / "known_addresses.json"
+        raw = json.loads(labels_file.read_text())
+    except (IOError, json.JSONDecodeError):
+        return flow
+    EXIT_CATS = ("intents_solvers", "bridges", "mixers", "no_kyc_swap")
+    lookup = {}
+    for cat in EXIT_CATS:
+        for addr, label in (raw.get(cat) or {}).items():
+            lookup[addr.lower()] = (cat, label)
+    exits = []
+    for node in flow.get("nodes", []):
+        addr = (node.get("address") or "").lower()
+        if addr in lookup:
+            cat, label = lookup[addr]
+            node["exit_category"] = cat
+            node["exit_note"] = "custody hand-off — cross-reference off-chain order book before concluding a destination"
+            exits.append({"address": node.get("address"), "category": cat, "label": label})
+    if exits:
+        flow["exit_points"] = exits
+    return flow
+
+
+def _prune_flow_noise(flow: dict, addresses: dict) -> dict:
+    """Drop leaf nodes whose only connections are to hubs (the victim pool,
+    token contracts, or any high-degree node) and that aren't themselves
+    labeled or the analysis subject — i.e. unrelated protocol counterparties."""
+    from collections import defaultdict
+
+    root = (flow.get("root") or "").lower()
+    labeled = {a.lower() for a in addresses}
+
+    neigh = defaultdict(set)
+    for e in flow.get("edges", []):
+        f = (e.get("from") or "").lower()
+        t = (e.get("to") or "").lower()
+        if f and t and f != t:
+            neigh[f].add(t)
+            neigh[t].add(f)
+
+    hubs = {a.lower() for a, i in addresses.items() if i.get("role") == "victim"}
+    for a, ns in neigh.items():
+        if a != root and len(ns) >= 8:
+            hubs.add(a)
+    hubs.discard(root)
+
+    remove = set()
+    for a, ns in neigh.items():
+        if a == root or a in labeled:
+            continue
+        if ns and ns <= hubs:
+            remove.add(a)
+
+    if not remove:
+        return flow
+    flow["nodes"] = [n for n in flow.get("nodes", [])
+                     if n.get("address", "").lower() not in remove]
+    flow["edges"] = [e for e in flow.get("edges", [])
+                     if (e.get("from") or "").lower() not in remove
+                     and (e.get("to") or "").lower() not in remove]
+    flow["_pruned_nodes"] = len(remove)
     return flow
 
 

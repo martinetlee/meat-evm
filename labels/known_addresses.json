@@ -1,7 +1,21 @@
 {
   "_meta": {
     "description": "Known address labels for fund tracing classification",
-    "last_updated": "2024-03-15"
+    "last_updated": "2024-03-15",
+    "intents_solvers_note": "Cross-chain intents/bridge SOLVER + settlement addresses. Funds that reach one may 'fly off' to another chain via an off-chain order book (coins commingle in the solver's pool, value re-emerges elsewhere). On hit: look up the intent (e.g. explorer.near-intents.org by address) before concluding a destination. Grow this list as solvers are identified.",
+    "kucoin_cluster_note": "KuCoin hot/consolidation wallets share vanity suffixes \u2026627e and \u20266933. Intake 0xabde75 forwards EXCLUSIVELY into this cluster => it is KuCoin's own infra, not a third party banking at KuCoin. Reaching it = a KYC'd-exchange deposit (identity/recovery lead), subject to the deposit-vs-nested-service caveat.",
+    "no_kyc_swap_note": "Custodial coin-swap services (BTC in -> other-asset out from their inventory). Custody hand-off + coins!=value, same failure mode as intents. Most are OPAQUE (no public API) \u2014 stop honestly, report 'unresolved/possible off-chain exit'. Exceptions with resolvable APIs: SideShift (public /api/v2/shifts/{id}).",
+    "resolvable_apis": {
+      "thorchain": "midgard.ninerealms.com/v2/actions?txid=  (meat thorchain)",
+      "maya": "midgard.mayachain.info/v2/actions?txid=  (meat thorchain --protocol maya)",
+      "debridge_dln": "stats-api.dln.trade/api/Orders/creationTxHash/{hash}",
+      "orbiter": "api.orbiter.finance/transaction/{hash}",
+      "cow": "api.cow.fi/mainnet/api/v1/trades?txHash={hash}",
+      "sideshift": "sideshift.ai/api/v2/shifts/{shiftId}",
+      "across": "across.to API",
+      "chainflip": "NO public REST \u2014 scan.chainflip.io / Swap SDK getStatusV2 only",
+      "near_intents": "NO clean public API \u2014 explorer.near-intents.org is auth-gated/SPA (manual)"
+    }
   },
   "cex": {
     "0x28c6c06298d514db089934071355e5743bf21d60": "Binance 14",
@@ -18,7 +32,15 @@
     "0xfa52274dd61e1643d2205169732f29114bc240b3": "OKX 2",
     "0x6cc5f688a315f3dc28a7781717a9a798a59fda7b": "OKX 3",
     "0x46340b20830761efd32832a74d7169b29feb9758": "Crypto.com 2",
-    "0x6262998ced04146fa42253a5c0af90ca02dfd2a3": "Crypto.com 1"
+    "0x6262998ced04146fa42253a5c0af90ca02dfd2a3": "Crypto.com 1",
+    "0x9696f59e4d72e237be84ffd425dcad154bf96976": "Binance 18",
+    "0x83c41363cbee0081dab75cb841fa24f3db46627e": "KuCoin hot wallet (analyst-labeled; \u2026627e vanity family)",
+    "0x83c4ef09089564a65378bb564df15b73fcac627e": "KuCoin cluster (\u2026627e vanity family; fed by 0xabde75 intake)",
+    "0x7491f26a0fcb459111b3a1db2fbfc4035d096933": "KuCoin cluster (\u20266933 vanity family; 53 ETH)",
+    "0x7491ee9dd2725f54a6f98559bfe5f790f0096933": "KuCoin cluster (\u20266933 vanity family)",
+    "0x749b6b70f120e25bbc37fce08ebd08b354e26933": "KuCoin cluster (\u20266933 vanity family)",
+    "0x74915b8fe4e18547b04d1a80f9982dd2b1146933": "KuCoin cluster (\u20266933 vanity family)",
+    "0xabde754665967692182cb31586c1bb25601cf2ca": "KuCoin deposit-consolidation intake wallet (180+ sources -> sweeps only into KuCoin \u2026627e/\u20266933 hot wallets). Hinkal BTC->USDT cash-out landed here."
   },
   "bridges": {
     "0x3ee18b2214aff97000d974cf647e7c347e8fa585": "Wormhole: Portal",
@@ -27,9 +49,29 @@
     "0x3154cf16ccdb4c6d922629664174b904d80f2c35": "Base: Portal",
     "0x40ec5b33f54e0e8a33a975908c5ba1c14e5bbbdf": "Polygon: ERC20 Bridge",
     "0xa0c68c638235ee32657e8f720a23cec1bfc6c9a8": "Polygon: zkEVM Bridge",
-    "0xe4edb277e41dc89ab076a1f049f4a3efa700bce8": "Across Protocol",
     "0xd19d4b5d358258f05d7b411e21a1460d11b0876f": "Hop Protocol: ETH Bridge",
-    "0x8731d54e9d02c286767d56ac03e8037c07e01e98": "Stargate: Router"
+    "0x8731d54e9d02c286767d56ac03e8037c07e01e98": "Stargate: Router",
+    "0xd37bbe5744d730a1d98d8dc97c42f0ca46ad7146": "THORChain Router",
+    "0xed23d1bf7ac2ce8b4c09a090e252ea6ee5145e6e": "THORChain Asgard Vault",
+    "0x5c7bcd6e7de5423a257d81b442095a1a6ced35c5": "Across Protocol: Ethereum SpokePool V2 (public API across.to)",
+    "0x4d9079bb4165aeb4084c526a32695dcfd2f77381": "Across Protocol: SpokePool V2 (deprecated)",
+    "0xe3985e6b61b814f7cdb188766562ba71b446b46d": "Maya Protocol: ETH Router v4 (THORChain-fork native swaps; RESOLVABLE via Midgard midgard.mayachain.info)",
+    "0xf5e10380213880111522dd0efd3dbb45b9f62bcc": "Chainflip: Vault (native cross-chain swaps, no-KYC; NO public REST \u2014 resolve via scan.chainflip.io / Swap SDK)",
+    "0x80c67432656d59144ceff962e8faf8926599bcf8": "Orbiter Finance: Bridge (L2<->L2; public API api.orbiter.finance/transaction/{hash})",
+    "0xe4edb277e41dc89ab076a1f049f4a3efa700bce8": "Orbiter Finance: Bridge 2",
+    "0x25ab3efd52e6470681ce037cd546dc60726948d3": "Meson: Protocol contract (same addr on all EVM chains)",
+    "0x2796317b0ff8538f253012862c06787adfb8ceb6": "Synapse: Bridge",
+    "0x7e7a0e201fd38d3adaa9523da6c109a07118c96a": "Synapse: Router",
+    "0x5427fefa711eff984124bfbb1ab6fbf5e3da1820": "Celer: cBridge V2",
+    "0x841ce48f9446c8e281d3f1444cb859b4a6d0738c": "Celer: cBridge (legacy V1)",
+    "0xce16f69375520ab01377ce7b88f5ba8c48f8d666": "Squid: Router (Axelar; same addr on all chains)",
+    "0x4f4495243837681061c4743b74b3eedf548d56a5": "Axelar: Gateway",
+    "0xb8f275fbf7a959f4bce59999a2ef122a099e81a8": "Symbiosis Finance: Portal",
+    "0xf621fb08bbe51af70e7e0f4ea63496894166ff7f": "Symbiosis Finance: Meta Router",
+    "0x3bdb03ad7363152dfbc185ee23ebc93f0cf93fd1": "Orbiter Finance: Maker EOA (ETH) [rotating \u2014 verify live]",
+    "0xacc517ea627ceb71cf25e002adaa9761623837b9": "Orbiter Finance: Maker EOA (USDC) [rotating]",
+    "0x9c6750d463ad17deec97a630af766f0a78f95127": "Orbiter Finance: Maker EOA (USDT) [rotating]",
+    "0xed01d58fe6433a5fe69720a0aa0ab1d1fdb15212": "Orbiter Finance: Maker EOA (all-token) [rotating]"
   },
   "mixers": {
     "0xd90e2f925da726b50c4ed8d0fb90ad053324f31b": "Tornado Cash: Router",
@@ -52,5 +94,26 @@
     "0x7d2768de32b0b80b7a3454c06bdac94a69ddc7a9": "Aave V2: Pool",
     "0x3d9819210a31b4961b30ef54be2aed79b9c9cd3b": "Compound: Comptroller",
     "0x5ba1e12693dc8f9c48aad8770482f4739beed696": "MakerDAO: Multicall"
+  },
+  "intents_solvers": {
+    "0x2cff890f0378a11913b6129b2e97417a2c302680": "NEAR Intents solver",
+    "0x9008d19f58aabd9ed0d60971565aa8510560ab41": "CoW Protocol: GPv2Settlement (public order API api.cow.fi/mainnet/api/v1/trades?txHash=)",
+    "0xc92e8bdf79f0507f65a392b0ab4667716bfe0110": "CoW Protocol: VaultRelayer (approval target)",
+    "0xef4fb24ad0916217251f553c0596f8edc630eb66": "deBridge DLN: Source (intent cross-chain; public API stats-api.dln.trade)",
+    "0xe7351fd770a37282b91d153ee690b63579d6dd7f": "deBridge DLN: Destination",
+    "0x663dc15d3c1ac63ff12e45ab68fea3f0a883c251": "deBridge: Crosschain Forwarder Proxy",
+    "0xf70da97812cb96acdf810712aa562db8dfa3dbef": "Relay: Solver (relay.link; instant cross-chain)",
+    "0x6000da47483062a0d734ba3dc7576ce6a0b645c4": "UniswapX: ExclusiveDutchOrderReactor V1",
+    "0x00000011f84b9aa48e5f8aa8b9897600006289be": "UniswapX: DutchOrderReactor V2",
+    "0xa88800cd213da5ae406ce248380802bd53b47647": "1inch: Fusion Settlement"
+  },
+  "no_kyc_swap": {
+    "0xf1da173228fcf015f43f3ea15abbb51f0d8f1123": "eXch: Hot wallet (no-KYC; OPAQUE \u2014 no API, infra seized 2025; STOP HONESTLY here)",
+    "0x4727250679294802377dd6ca6541b8e459077c95": "FixedFloat: Hot Wallet (no-KYC; API key-gated)",
+    "0x4e5b2e1dc63f6b91cb6cd759936495434c7e972f": "FixedFloat 1 [MED \u2014 community tag]",
+    "0x975d9bd9928f398c7e01f6ba236816fa558cd94b": "ChangeNOW: Hot Wallet 1 (no-KYC; API key-gated)",
+    "0xa96be652a08d9905f15b7fbe2255708709becd09": "ChangeNOW: Hot Wallet 2",
+    "0x7bacd3e83522f484bc5128ea93bf7290f1f1b9e5": "SimpleSwap [MED \u2014 community tag]",
+    "0xcdd37ada79f589c15bd4f8fd2083dc88e34a2af2": "SideShift: Hot Wallet (no-KYC; PUBLIC status API sideshift.ai/api/v2/shifts/{id})"
   }
 }

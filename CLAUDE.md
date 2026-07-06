@@ -38,6 +38,10 @@ labeled), **loss is attributed** (attacker gains matched by a `victim`-role addr
 loss or absorbing an illiquid token the attacker dumped onto it; the gate names dump recipients as
 `victim_candidates`), attacker/victim labels have provenance, and money-out txs are fetched in full.
 A Stop hook runs `check` automatically. Set `eth_price_usd` in case.json to value ETH/WETH too.
+Cross-chain (fund tracing): `btc-trace`, `btc-tx`, `thorchain` (+`--protocol maya`), `debridge`,
+`orbiter`, `intents` — deterministic Bitcoin peel-chain following (Blockstream), THORChain/Maya memo
+decode + Midgard, deBridge DLN and Orbiter order resolution, and intents/bridge registry
+cross-reference. Prefer these over hand-tracing explorer web pages.
 
 ## Case directory
 Each analysis writes to `cases/<case-name>/`. Evidence (raw on-chain data) in `evidence/`, analysis in `findings/`.
@@ -75,6 +79,7 @@ System (optional): cast, forge (Foundry) for PoC reproduction
 - `meat/evidence.py` — Write-once evidence store
 - `meat/case.py` — Case lifecycle (case.json, journal.md, addresses.json)
 - `meat/classify.py` — Address classification (EOA/contract/token/proxy)
+- `meat/crosschain.py` — Bitcoin (Blockstream) peel-chain tracing + THORChain memo/Midgard decode
 - `meat/analysis.py` — Deterministic correctness helpers: provenance, profit resolution, and the
   `check` invariant gate (value conservation, provenance-required, money-out-fetched). Pure + offline.
 - `meat/parse.py` — Input parser (tx hash, address, URL, batch)

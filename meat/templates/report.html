@@ -6,40 +6,50 @@
 <title>MEAT-EVM Report</title>
 <style>
 :root {
-  --bg: hsl(220, 15%, 8%);
-  --surface: hsl(220, 15%, 12%);
-  --surface2: hsl(220, 15%, 16%);
-  --border: hsl(220, 10%, 22%);
-  --text: hsl(0, 0%, 88%);
-  --text-dim: hsl(0, 0%, 55%);
-  --accent: hsl(200, 80%, 55%);
-  --accent-dim: hsl(200, 60%, 30%);
-  --red: hsl(0, 70%, 55%);
-  --red-dim: hsl(0, 50%, 20%);
-  --green: hsl(140, 60%, 45%);
-  --green-dim: hsl(140, 40%, 18%);
-  --yellow: hsl(45, 80%, 55%);
-  --yellow-dim: hsl(45, 50%, 20%);
-  --purple: hsl(270, 60%, 60%);
-  --purple-dim: hsl(270, 40%, 22%);
-  --orange: hsl(25, 80%, 55%);
-  --blue: hsl(210, 70%, 55%);
-  --blue-dim: hsl(210, 50%, 20%);
-  --font-mono: 'SF Mono', 'Fira Code', 'JetBrains Mono', Consolas, monospace;
-  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --bg: hsl(222, 14%, 7%);
+  --surface: hsl(222, 13%, 10.5%);
+  --surface2: hsl(222, 12%, 14.5%);
+  --border: hsl(222, 11%, 19%);
+  --border-strong: hsl(222, 10%, 27%);
+  --text: hsl(210, 16%, 93%);
+  --text-dim: hsl(214, 12%, 64%);
+  --text-mute: hsl(215, 10%, 48%);
+  --accent: hsl(199, 76%, 62%);
+  --accent-dim: hsl(199, 42%, 26%);
+  --red: hsl(2, 72%, 63%);
+  --red-dim: hsl(2, 48%, 20%);
+  --green: hsl(148, 52%, 52%);
+  --green-dim: hsl(148, 38%, 17%);
+  --yellow: hsl(42, 82%, 60%);
+  --yellow-dim: hsl(42, 52%, 19%);
+  --purple: hsl(266, 62%, 68%);
+  --purple-dim: hsl(266, 40%, 24%);
+  --orange: hsl(26, 82%, 60%);
+  --blue: hsl(206, 72%, 62%);
+  --blue-dim: hsl(206, 50%, 20%);
+  --r-sm: 6px; --r: 10px; --r-lg: 14px;
+  --shadow: 0 1px 2px hsl(222 45% 2% / 0.5), 0 6px 20px -6px hsl(222 45% 2% / 0.45);
+  --maxw: 1360px; --prose: 74ch;
+  --font-mono: 'SF Mono', 'JetBrains Mono', 'Fira Code', ui-monospace, Consolas, monospace;
+  --font-sans: 'Inter var', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
 }
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-body { background: var(--bg); color: var(--text); font-family: var(--font-sans); font-size: 14px; line-height: 1.5; }
-a { color: var(--accent); text-decoration: none; }
-a:hover { text-decoration: underline; }
+html { scroll-behavior: smooth; }
+body { background: var(--bg); color: var(--text); font-family: var(--font-sans); font-size: 15px; line-height: 1.6; -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; font-variant-ligatures: none; }
+body { background-image: radial-gradient(1200px 600px at 80% -10%, hsl(199 40% 12% / 0.35), transparent 70%); background-attachment: fixed; }
+a { color: var(--accent); text-decoration: none; transition: color 0.15s; }
+a:hover { color: hsl(199, 82%, 72%); text-decoration: underline; text-underline-offset: 2px; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+::selection { background: var(--accent-dim); color: #fff; }
+.mono, .stat-value, .addr, code, .json-viewer, th, td { font-variant-numeric: tabular-nums; }
 
 /* Header */
-.header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 16px 24px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
-.header-title { font-size: 18px; font-weight: 600; font-family: var(--font-mono); }
-.header-meta { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.header { background: linear-gradient(180deg, var(--surface), hsl(222 13% 9%)); border-bottom: 1px solid var(--border); padding: 20px 28px; display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+.header-title { font-size: 20px; font-weight: 700; font-family: var(--font-mono); letter-spacing: -0.02em; }
+.header-meta { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 
 /* Badges */
-.badge { display: inline-block; padding: 2px 10px; border-radius: 4px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+.badge { display: inline-flex; align-items: center; padding: 3px 10px; border-radius: 999px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.6px; line-height: 1.4; }
 .badge-red { background: var(--red-dim); color: var(--red); border: 1px solid var(--red); }
 .badge-green { background: var(--green-dim); color: var(--green); border: 1px solid var(--green); }
 .badge-yellow { background: var(--yellow-dim); color: var(--yellow); border: 1px solid var(--yellow); }
@@ -48,27 +58,30 @@ a:hover { text-decoration: underline; }
 .badge-accent { background: var(--accent-dim); color: var(--accent); border: 1px solid var(--accent); }
 
 /* Tabs */
-.tabs { display: flex; background: var(--surface); border-bottom: 1px solid var(--border); padding: 0 24px; overflow-x: auto; }
-.tab { padding: 10px 18px; cursor: pointer; color: var(--text-dim); font-size: 13px; font-weight: 500; border-bottom: 2px solid transparent; white-space: nowrap; transition: color 0.15s, border-color 0.15s; }
-.tab:hover { color: var(--text); }
-.tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.tabs { display: flex; gap: 2px; background: var(--surface); border-bottom: 1px solid var(--border); padding: 0 22px; overflow-x: auto; position: sticky; top: 0; z-index: 5; box-shadow: var(--shadow); scrollbar-width: thin; }
+.tab { padding: 13px 16px; cursor: pointer; color: var(--text-dim); font-size: 13.5px; font-weight: 500; border-bottom: 2px solid transparent; white-space: nowrap; transition: color 0.15s, border-color 0.15s, background 0.15s; }
+.tab:hover { color: var(--text); background: hsl(222 12% 13% / 0.6); }
+.tab.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
 
 /* Tab content */
-.tab-content { display: none; padding: 24px; max-width: 1400px; margin: 0 auto; }
+.tab-content { display: none; padding: 32px 28px 56px; max-width: var(--maxw); margin: 0 auto; animation: fadeIn 0.2s ease; }
 .tab-content.active { display: block; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 
 /* Cards */
-.card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 16px; }
-.card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
-.card-title { font-size: 15px; font-weight: 600; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: 22px 24px; margin-bottom: 20px; box-shadow: var(--shadow); }
+.card-header { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+.card-title { font-size: 16px; font-weight: 600; letter-spacing: -0.01em; }
 
 /* Tables */
-.table-wrap { overflow-x: auto; }
-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-th { text-align: left; padding: 8px 12px; background: var(--surface2); color: var(--text-dim); font-weight: 500; border-bottom: 1px solid var(--border); cursor: pointer; white-space: nowrap; user-select: none; }
+.table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--r); background: var(--surface); }
+table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+th { text-align: left; padding: 11px 16px; background: var(--surface2); color: var(--text-dim); font-weight: 600; font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid var(--border-strong); cursor: pointer; white-space: nowrap; user-select: none; position: sticky; top: 0; }
 th:hover { color: var(--text); }
-td { padding: 8px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
-tr:hover td { background: var(--surface2); }
+td { padding: 11px 16px; border-bottom: 1px solid var(--border); vertical-align: top; }
+tbody tr:last-child td { border-bottom: none; }
+tbody tr:nth-child(even) td { background: hsl(222 12% 12% / 0.4); }
+tbody tr:hover td { background: var(--surface2); }
 
 /* Address */
 .addr { font-family: var(--font-mono); font-size: 12px; display: inline-flex; align-items: center; gap: 4px; }
@@ -78,7 +91,7 @@ tr:hover td { background: var(--surface2); }
 .addr .copy-btn.copied { color: var(--green); opacity: 1; }
 
 /* Collapsible */
-.collapsible-header { cursor: pointer; display: flex; align-items: center; gap: 8px; padding: 8px 0; color: var(--text-dim); font-size: 13px; }
+.collapsible-header { cursor: pointer; display: flex; align-items: center; gap: 8px; padding: 10px 0; color: var(--text-dim); font-size: 13px; font-weight: 500; transition: color 0.15s; }
 .collapsible-header:hover { color: var(--text); }
 .collapsible-header .arrow { transition: transform 0.15s; display: inline-block; }
 .collapsible-header.open .arrow { transform: rotate(90deg); }
@@ -94,17 +107,21 @@ tr:hover td { background: var(--surface2); }
 .json-null { color: var(--text-dim); }
 
 /* Callout */
-.callout { border-left: 3px solid var(--accent); background: var(--surface2); padding: 12px 16px; border-radius: 0 6px 6px 0; margin-bottom: 16px; }
-.callout-red { border-left-color: var(--red); }
-.callout-green { border-left-color: var(--green); }
-.callout-yellow { border-left-color: var(--yellow); }
-.callout-title { font-weight: 600; margin-bottom: 6px; font-size: 13px; }
+.callout { border-left: 3px solid var(--accent); background: linear-gradient(90deg, hsl(199 42% 26% / 0.18), var(--surface2) 40%); padding: 14px 18px; border-radius: 0 var(--r-sm) var(--r-sm) 0; margin-bottom: 18px; }
+.callout-red { border-left-color: var(--red); background: linear-gradient(90deg, hsl(2 48% 20% / 0.28), var(--surface2) 40%); }
+.callout-green { border-left-color: var(--green); background: linear-gradient(90deg, hsl(148 38% 17% / 0.28), var(--surface2) 40%); }
+.callout-yellow { border-left-color: var(--yellow); background: linear-gradient(90deg, hsl(42 52% 19% / 0.28), var(--surface2) 40%); }
+.callout-title { font-weight: 600; margin-bottom: 4px; font-size: 13.5px; letter-spacing: -0.01em; }
 
 /* Stats grid */
-.stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 20px; }
-.stat-card { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 14px; }
-.stat-label { font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
-.stat-value { font-size: 22px; font-weight: 700; font-family: var(--font-mono); }
+.stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; margin-bottom: 24px; }
+.stat-card { position: relative; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: 18px 18px 16px; overflow: hidden; transition: transform 0.15s, border-color 0.15s; }
+.stat-card:hover { transform: translateY(-2px); border-color: var(--border-strong); }
+.stat-card::before { content: ''; position: absolute; inset: 0 0 auto 0; height: 2px; background: var(--accent); opacity: 0.5; }
+.stat-card.red::before { background: var(--red); }
+.stat-card.green::before { background: var(--green); }
+.stat-label { font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.07em; margin-bottom: 8px; font-weight: 600; }
+.stat-value { font-size: 25px; font-weight: 700; font-family: var(--font-mono); letter-spacing: -0.02em; line-height: 1.15; }
 .stat-value.red { color: var(--red); }
 .stat-value.green { color: var(--green); }
 
@@ -113,9 +130,10 @@ tr:hover td { background: var(--surface2); }
 .flow-legend { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 12px; font-size: 12px; }
 .flow-legend-item { display: flex; align-items: center; gap: 5px; }
 .flow-legend-dot { width: 12px; height: 12px; border-radius: 3px; border: 2px solid; }
-.flow-controls { display: flex; gap: 8px; margin-bottom: 10px; }
-.flow-controls button { background: var(--surface2); border: 1px solid var(--border); color: var(--text); padding: 4px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; }
-.flow-controls button:hover { background: var(--border); }
+.flow-controls { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+.flow-controls button { background: var(--surface2); border: 1px solid var(--border); color: var(--text); padding: 6px 14px; border-radius: var(--r-sm); cursor: pointer; font-size: 12.5px; font-weight: 500; transition: background 0.15s, border-color 0.15s, transform 0.1s; }
+.flow-controls button:hover { background: var(--border); border-color: var(--border-strong); }
+.flow-controls button:active { transform: translateY(1px); }
 
 /* Sequence diagram */
 .seq-diagram { overflow-x: auto; margin-bottom: 20px; }
@@ -133,41 +151,62 @@ tr:hover td { background: var(--surface2); }
 .seq-step-num { position: absolute; left: 4px; font-size: 10px; color: var(--text-dim); font-weight: 600; }
 
 /* Timeline */
-.timeline { position: relative; padding-left: 24px; }
-.timeline::before { content: ''; position: absolute; left: 8px; top: 0; bottom: 0; width: 2px; background: var(--border); }
-.timeline-entry { position: relative; margin-bottom: 20px; padding-left: 16px; }
-.timeline-entry::before { content: ''; position: absolute; left: -20px; top: 6px; width: 10px; height: 10px; background: var(--accent); border-radius: 50%; border: 2px solid var(--bg); }
+.timeline { position: relative; padding-left: 26px; }
+.timeline::before { content: ''; position: absolute; left: 8px; top: 4px; bottom: 4px; width: 2px; background: linear-gradient(var(--accent-dim), var(--border) 30%); }
+.timeline-entry { position: relative; margin-bottom: 22px; padding-left: 18px; }
+.timeline-entry::before { content: ''; position: absolute; left: -22px; top: 5px; width: 11px; height: 11px; background: var(--accent); border-radius: 50%; border: 2px solid var(--bg); box-shadow: 0 0 0 3px hsl(199 42% 26% / 0.4); }
 .timeline-date { font-size: 12px; color: var(--text-dim); font-family: var(--font-mono); margin-bottom: 4px; }
-.timeline-text { font-size: 13px; white-space: pre-wrap; }
+.timeline-text { font-size: 14px; line-height: 1.65; white-space: pre-wrap; max-width: var(--prose); }
 
 /* Findings markdown */
-.findings-content { font-size: 13px; line-height: 1.7; }
-.findings-content h1 { font-size: 18px; margin: 20px 0 10px; }
-.findings-content h2 { font-size: 15px; margin: 16px 0 8px; color: var(--accent); }
-.findings-content h3 { font-size: 14px; margin: 12px 0 6px; }
-.findings-content code { font-family: var(--font-mono); background: var(--surface2); padding: 1px 5px; border-radius: 3px; font-size: 12px; }
-.findings-content pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 12px; overflow-x: auto; margin: 8px 0; }
-.findings-content pre code { background: none; padding: 0; }
-.findings-content table { margin: 8px 0; }
-.findings-content blockquote { border-left: 3px solid var(--accent); padding-left: 12px; color: var(--text-dim); margin: 8px 0; }
+.findings-content { font-size: 14.5px; line-height: 1.72; color: hsl(210 15% 90%); }
+.findings-content > * { max-width: var(--prose); }
+.findings-content > .table-wrap, .findings-content > table, .findings-content > pre { max-width: 100%; }
+.findings-content h1 { font-size: 23px; font-weight: 700; letter-spacing: -0.02em; margin: 4px 0 14px; }
+.findings-content h2 { font-size: 17px; font-weight: 650; letter-spacing: -0.01em; margin: 30px 0 10px; padding-top: 10px; color: var(--text); border-top: 1px solid var(--border); }
+.findings-content h2:first-of-type { border-top: none; padding-top: 0; }
+.findings-content h3 { font-size: 14.5px; font-weight: 650; margin: 20px 0 8px; color: var(--accent); }
+.findings-content p, .findings-content li { text-wrap: pretty; }
+.findings-content p { margin: 10px 0; }
+.findings-content ul, .findings-content ol { margin: 10px 0 10px 22px; }
+.findings-content li { margin: 5px 0; }
+.findings-content strong { color: #fff; font-weight: 650; }
+.findings-content code { font-family: var(--font-mono); background: var(--surface2); padding: 2px 6px; border-radius: 4px; font-size: 0.86em; color: hsl(199 60% 80%); border: 1px solid var(--border); }
+.findings-content pre { background: hsl(222 16% 5.5%); border: 1px solid var(--border); border-radius: var(--r-sm); padding: 14px 16px; overflow-x: auto; margin: 12px 0; line-height: 1.6; }
+.findings-content pre code { background: none; padding: 0; border: none; color: hsl(210 14% 86%); font-size: 12.5px; }
+.findings-content table { margin: 14px 0; border: 1px solid var(--border); border-radius: var(--r-sm); overflow: hidden; }
+.findings-content blockquote { border-left: 3px solid var(--accent-dim); background: var(--surface2); padding: 8px 16px; border-radius: 0 var(--r-sm) var(--r-sm) 0; color: var(--text-dim); margin: 12px 0; }
+.findings-content hr { border: none; border-top: 1px solid var(--border); margin: 24px 0; }
 
 /* Section heading */
-.section-title { font-size: 16px; font-weight: 600; margin-bottom: 14px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+.section-title { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.09em; color: var(--text-dim); margin-bottom: 16px; padding-bottom: 10px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px; }
+.section-title::before { content: ''; width: 3px; height: 14px; border-radius: 2px; background: var(--accent); }
 
 /* Empty state */
-.empty-state { text-align: center; padding: 40px; color: var(--text-dim); }
+.empty-state { text-align: center; padding: 56px 24px; color: var(--text-mute); font-size: 14px; border: 1px dashed var(--border); border-radius: var(--r); }
 
 /* Transfer row colors */
 .transfer-in { color: var(--green); }
 .transfer-out { color: var(--red); }
 
+/* Scrollbars */
+::-webkit-scrollbar { width: 11px; height: 11px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 6px; border: 3px solid var(--bg); }
+::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }
+
 /* Responsive */
 @media (max-width: 768px) {
-  .header { padding: 12px 16px; }
+  body { font-size: 14px; }
+  .header { padding: 14px 16px; }
+  .header-title { font-size: 17px; }
   .tabs { padding: 0 8px; }
-  .tab { padding: 8px 12px; font-size: 12px; }
-  .tab-content { padding: 16px; }
+  .tab { padding: 11px 12px; font-size: 12.5px; }
+  .tab-content { padding: 20px 16px 40px; }
+  .card { padding: 18px 16px; }
   .stats-grid { grid-template-columns: repeat(2, 1fr); }
+  .stat-value { font-size: 21px; }
+  .findings-content { font-size: 14px; }
 }
 </style>
 <script src="https://unpkg.com/cytoscape@3.30.4/dist/cytoscape.min.js"></script>
@@ -187,8 +226,6 @@ tr:hover td { background: var(--surface2); }
   <div class="tab" data-tab="flow">Fund Flow</div>
   <div class="tab" data-tab="addresses">Addresses</div>
   <div class="tab" data-tab="technical">Technical</div>
-  <div class="tab" data-tab="evidence">Evidence</div>
-  <div class="tab" data-tab="timeline">Timeline</div>
 </div>
 
 <div class="tab-content active" id="tab-overview"></div>
@@ -196,8 +233,6 @@ tr:hover td { background: var(--surface2); }
 <div class="tab-content" id="tab-flow"></div>
 <div class="tab-content" id="tab-addresses"></div>
 <div class="tab-content" id="tab-technical"></div>
-<div class="tab-content" id="tab-evidence"></div>
-<div class="tab-content" id="tab-timeline"></div>
 
 <script>
 const REPORT_DATA = {{REPORT_DATA}};
@@ -374,6 +409,20 @@ function renderMarkdown(md) {
   html = html.replace(/(<\/h[1-4]>|<\/pre>|<\/table>|<\/ul>|<\/ol>)\s*<\/p>/g, '$1');
   html = html.replace(/<p>\s*<\/p>/g, '');
 
+  // Auto-link full tx hashes and addresses to the block explorer.
+  // Skip <pre> blocks so code/memos stay intact. Tx hashes (64 hex) are matched
+  // before addresses (40 hex); the 40-hex pattern can't match inside a 64-hex run.
+  if (explorerUrl) {
+    html = html.split(/(<pre>[\s\S]*?<\/pre>)/).map(seg => {
+      if (seg.startsWith('<pre>')) return seg;
+      seg = seg.replace(/(0x[a-fA-F0-9]{64})\b/g, (m, h) =>
+        `<a href="${explorerUrl}/tx/${h}" target="_blank" title="${h}">${h.slice(0, 10)}…${h.slice(-8)}</a>`);
+      seg = seg.replace(/(0x[a-fA-F0-9]{40})\b/g, (m, a) =>
+        `<a href="${explorerUrl}/address/${a}" target="_blank" title="${a}">${a}</a>`);
+      return seg;
+    }).join('');
+  }
+
   return html;
 }
 
@@ -502,8 +551,10 @@ hm.appendChild(badge(C.status, C.status === 'active' ? 'yellow' : 'green'));
     container.appendChild(card);
   }
 
-  // Other findings (recon, fund-trace, etc.) as collapsible
-  const otherFindings = Object.entries(D.findings || {}).filter(([name]) => name !== 'analysis');
+  // Other findings as collapsible (fund-trace/fund-source render on the Fund Flow tab instead)
+  const FUND_FINDINGS = ['fund-trace', 'fund-source'];
+  const otherFindings = Object.entries(D.findings || {})
+    .filter(([name]) => name !== 'analysis' && !FUND_FINDINGS.includes(name));
   if (otherFindings.length) {
     otherFindings.forEach(([name, md]) => {
       container.appendChild(collapsible(`Finding: ${name}`, (body) => {
@@ -523,78 +574,23 @@ hm.appendChild(badge(C.status, C.status === 'active' ? 'yellow' : 'green'));
     return;
   }
 
+  container.appendChild(el('div', {class: 'section-title', text: 'Transactions'}));
+  const tbl = el('table');
+  tbl.innerHTML = '<thead><tr><th>Tx</th><th>Status</th><th>Block</th><th>From</th><th>To</th><th>Function</th><th>Value</th></tr></thead>';
+  const tbody = el('tbody');
   txs.forEach(tx => {
-    const card = el('div', {class: 'card'});
-    const header = el('div', {class: 'card-header'});
-    const left = el('div', {style: 'display: flex; align-items: center; gap: 8px;'});
-    left.appendChild(txLink(tx.hash, explorerUrl));
-    left.appendChild(badge(tx.status || '?', tx.status === 'success' ? 'green' : 'red'));
-    header.appendChild(left);
-    if (tx.block_number) header.appendChild(el('span', {text: `Block ${tx.block_number}`, style: 'font-size: 12px; color: var(--text-dim);'}));
-    card.appendChild(header);
-
-    // Basic info
-    const info = el('div', {style: 'display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 13px; margin-bottom: 12px;'});
-    const addRow = (label, content) => { info.appendChild(el('span', {text: label, style: 'color: var(--text-dim);'})); const v = el('span'); if (typeof content === 'string') v.textContent = content; else v.appendChild(content); info.appendChild(v); };
-    addRow('From:', addrEl(tx.from, explorerUrl));
-    addRow('To:', addrEl(tx.to, explorerUrl));
-    if (tx.value_formatted) addRow('Value:', tx.value_formatted);
-    if (tx.tx_fee_formatted) addRow('Fee:', tx.tx_fee_formatted);
-    if (tx.decoded_input) addRow('Function:', tx.decoded_input.function || tx.decoded_input.signature || '—');
-    card.appendChild(info);
-
-    // Token transfers
-    const transfers = tx.token_transfers || [];
-    if (transfers.length) {
-      card.appendChild(collapsible(`Token Transfers (${transfers.length})`, (body) => {
-        const tbl = el('table');
-        tbl.innerHTML = '<thead><tr><th>From</th><th>To</th><th>Amount</th><th>Token</th></tr></thead>';
-        const tbody = el('tbody');
-        transfers.forEach(t => {
-          const tr = el('tr');
-          const tdF = el('td'); tdF.appendChild(addrEl(t.from, explorerUrl)); tr.appendChild(tdF);
-          const tdT = el('td'); tdT.appendChild(addrEl(t.to, explorerUrl)); tr.appendChild(tdT);
-          tr.appendChild(el('td', {text: t.amount_formatted || fmtNum(t.amount_raw)}));
-          tr.appendChild(el('td', {text: t.token_symbol || t.token_name || '?'}));
-          tbody.appendChild(tr);
-        });
-        tbl.appendChild(tbody);
-        body.appendChild(el('div', {class: 'table-wrap'}, [tbl]));
-      }));
-    }
-
-    // Net flows
-    const flows = tx.net_flows;
-    if (flows && Object.keys(flows).length) {
-      card.appendChild(collapsible('Net Flows', (body) => {
-        Object.entries(flows).forEach(([addr, tokens]) => {
-          const div = el('div', {style: 'margin-bottom: 8px;'});
-          div.appendChild(addrEl(addr, explorerUrl));
-          const ul = el('ul', {style: 'padding-left: 18px; font-size: 12px;'});
-          Object.entries(tokens).forEach(([tok, info]) => {
-            const val = typeof info === 'object' ? `${info.formatted || info.raw} (${info.usd_value || ''})` : info;
-            ul.appendChild(el('li', {text: `${tok}: ${val}`}));
-          });
-          div.appendChild(ul);
-          body.appendChild(div);
-        });
-      }));
-    }
-
-    // Decoded logs
-    const logs = tx.decoded_logs || [];
-    if (logs.length) {
-      card.appendChild(collapsible(`Decoded Logs (${logs.length})`, (body) => {
-        logs.forEach(log => {
-          const div = el('div', {style: 'margin-bottom: 6px; font-size: 12px; font-family: var(--font-mono);'});
-          div.textContent = `${log.event || 'Unknown'}(${Object.entries(log.params || {}).map(([k,v]) => `${k}=${typeof v === 'string' && v.length > 20 ? shortAddr(v) : v}`).join(', ')})`;
-          body.appendChild(div);
-        });
-      }));
-    }
-
-    container.appendChild(card);
+    const tr = el('tr');
+    const tdH = el('td'); tdH.appendChild(txLink(tx.hash, explorerUrl)); tr.appendChild(tdH);
+    const tdS = el('td'); tdS.appendChild(badge(tx.status || '?', tx.status === 'success' ? 'green' : 'red')); tr.appendChild(tdS);
+    tr.appendChild(el('td', {text: (tx.block_number != null ? String(tx.block_number) : '—'), style: 'white-space:nowrap;'}));
+    const tdF = el('td'); tdF.appendChild(addrEl(tx.from, explorerUrl)); tr.appendChild(tdF);
+    const tdT = el('td'); tdT.appendChild(addrEl(tx.to, explorerUrl)); tr.appendChild(tdT);
+    tr.appendChild(el('td', {text: (tx.decoded_input && (tx.decoded_input.function || tx.decoded_input.signature)) || '—', style: 'font-family:var(--font-mono); font-size:12px;'}));
+    tr.appendChild(el('td', {text: tx.value_formatted || '—', style: 'white-space:nowrap;'}));
+    tbody.appendChild(tr);
   });
+  tbl.appendChild(tbody);
+  container.appendChild(el('div', {class: 'table-wrap'}, [tbl]));
 })();
 
 // ── Fund Flow Tab (Cytoscape.js) ──
@@ -608,6 +604,24 @@ hm.appendChild(badge(C.status, C.status === 'active' ? 'yellow' : 'green'));
   }
 
   container.appendChild(el('div', {class: 'section-title', text: 'Fund Flow Diagram'}));
+
+  // Cross-chain / service exit points — funds can "fly off" here with no on-chain link
+  if (flow.exit_points && flow.exit_points.length) {
+    const co = el('div', {class: 'callout callout-yellow'});
+    co.appendChild(el('div', {class: 'callout-title', text: '⚠ Cross-chain / service exit points on this path'}));
+    co.appendChild(el('div', {style: 'font-size:13px; color:var(--text-dim); margin-bottom:8px;',
+      text: 'These are custody hand-offs (intents solvers / bridges / mixers), not confirmed destinations. Funds may leave the chain with no on-chain link — cross-reference the service’s off-chain order book (e.g. NEAR Intents) before concluding where they went.'}));
+    flow.exit_points.forEach(x => {
+      const row = el('div', {style: 'font-size:12.5px; margin:2px 0;'});
+      row.appendChild(badge(x.category, x.category === 'mixers' ? 'yellow' : (x.category === 'bridges' ? 'purple' : 'accent')));
+      const s = el('span', {style: 'margin-left:8px;'});
+      s.appendChild(addrEl(x.address, explorerUrl));
+      s.appendChild(el('span', {text: `  ${x.label || ''}`, style: 'color:var(--text-dim);'}));
+      row.appendChild(s);
+      co.appendChild(row);
+    });
+    container.appendChild(co);
+  }
 
   // Legend
   const legend = el('div', {class: 'flow-legend'});
@@ -665,12 +679,13 @@ hm.appendChild(badge(C.status, C.status === 'active' ? 'yellow' : 'green'));
   const edgeAgg = {};
   dedupedEdges.forEach(e => {
     const key = `${e.from.toLowerCase()}-${e.to.toLowerCase()}`;
-    if (!edgeAgg[key]) edgeAgg[key] = { from: e.from, to: e.to, tokens: {}, count: 0, totalWei: BigInt(0) };
+    if (!edgeAgg[key]) edgeAgg[key] = { from: e.from, to: e.to, tokens: {}, count: 0, totalWei: BigInt(0), op: '' };
     const token = e.token || 'ETH';
     const val = BigInt(e.value || '0');
     edgeAgg[key].tokens[token] = (edgeAgg[key].tokens[token] || BigInt(0)) + val;
     edgeAgg[key].totalWei += val;
     edgeAgg[key].count++;
+    if (e.op && !edgeAgg[key].op) edgeAgg[key].op = e.op;
   });
 
   // Role → color map
@@ -706,7 +721,10 @@ hm.appendChild(badge(C.status, C.status === 'active' ? 'yellow' : 'green'));
     const addrData = addrInfo[addr] || addrInfo[Object.keys(addrInfo).find(k => k.toLowerCase() === addr)] || {};
     const role = addrData.role || node.role || node.type || 'unknown';
     const color = roleColors[role] || roleColors.unknown;
-    const label = node.label || addrData.role || (role !== 'unknown' ? role : '');
+    const knownName = (addrData.classify && typeof addrData.classify.known_entity === 'object')
+      ? addrData.classify.known_entity.label : addrData.classify?.known_entity;
+    const label = node.label || (addrData.labels && addrData.labels[0]) || knownName
+      || (role !== 'unknown' ? role : '');
     const balance = node.balance || addrData.classify?.balance_formatted || '';
     // Override color for high infra score (likely public infrastructure)
     const infraScore = node.infra_score || 0;
@@ -747,7 +765,7 @@ hm.appendChild(badge(C.status, C.status === 'active' ? 'yellow' : 'green'));
   const cyEdges = Object.values(edgeAgg).map((agg, i) => {
     const valEth = Number(agg.totalWei / BigInt(10**14)) / 10000;
     const width = Math.max(1, Math.min(8, (valEth / maxVal) * 8));
-    const label = Object.entries(agg.tokens)
+    let label = Object.entries(agg.tokens)
       .map(([t, v]) => {
         const dec = tokenDecimals[t.toUpperCase()] || 18;
         const formatted = fmtWei(String(v), dec);
@@ -756,12 +774,16 @@ hm.appendChild(badge(C.status, C.status === 'active' ? 'yellow' : 'green'));
       })
       .filter(Boolean)
       .join('\n');
+    if (label.length > 35) label = label.slice(0, 32) + '...';
+    const opLabel = { swap: 'swap →', unwrap: 'unwrap →', wrap: 'wrap →', mix: 'mixer →', bridge: 'bridge →' }[agg.op];
+    if (opLabel) label = label ? `${opLabel}\n${label}` : opLabel;
     return {
       data: {
         id: `e${i}`,
         source: agg.from.toLowerCase(),
         target: agg.to.toLowerCase(),
-        label: label.length > 35 ? label.slice(0, 32) + '...' : label,
+        label: label,
+        op: agg.op || '',
         width: width,
         count: agg.count,
       }
@@ -813,6 +835,16 @@ hm.appendChild(badge(C.status, C.status === 'active' ? 'yellow' : 'green'));
           'text-background-padding': '2px',
           'text-wrap': 'wrap',
           'arrow-scale': 0.8,
+        }
+      },
+      {
+        selector: 'edge[op != ""]',
+        style: {
+          'line-style': 'dashed',
+          'line-dash-pattern': [6, 3],
+          'line-color': '#6b7a8f',
+          'target-arrow-color': '#8a99ad',
+          'color': '#b7c2d0',
         }
       },
       {
@@ -1055,23 +1087,7 @@ hm.appendChild(badge(C.status, C.status === 'active' ? 'yellow' : 'green'));
     }
   });
 
-  // Transfers table below graph
-  container.appendChild(el('div', {class: 'section-title', text: 'All Transfers'}));
-  const tbl = el('table');
-  tbl.innerHTML = '<thead><tr><th>From</th><th>To</th><th>Amount</th><th>Token</th><th>Tx</th><th>Time</th></tr></thead>';
-  const tbody = el('tbody');
-  dedupedEdges.slice(0, 100).forEach(e => {
-    const tr = el('tr');
-    const tdF = el('td'); tdF.appendChild(addrEl(e.from, explorerUrl)); tr.appendChild(tdF);
-    const tdT = el('td'); tdT.appendChild(addrEl(e.to, explorerUrl)); tr.appendChild(tdT);
-    tr.appendChild(el('td', {text: fmtWei(e.value, tokenDecimals[(e.token||'').toUpperCase()] || 18)}));
-    tr.appendChild(el('td', {text: e.token || '?'}));
-    const tdTx = el('td'); tdTx.appendChild(txLink(e.tx_hash, explorerUrl)); tr.appendChild(tdTx);
-    tr.appendChild(el('td', {text: e.timestamp ? e.timestamp.replace('T', ' ').slice(0, 19) : '—', style: 'white-space: nowrap; font-size: 11px;'}));
-    tbody.appendChild(tr);
-  });
-  tbl.appendChild(tbody);
-  container.appendChild(el('div', {class: 'card'}, [el('div', {class: 'table-wrap'}, [tbl])]));
+  // (All Transfers table moved to the bottom of the tab, collapsed — see below)
 
   // Recovery summary
   const recovery = flow.recovery || [];
@@ -1091,6 +1107,37 @@ hm.appendChild(badge(C.status, C.status === 'active' ? 'yellow' : 'green'));
     rtbl.appendChild(rtbody);
     container.appendChild(el('div', {class: 'card'}, [el('div', {class: 'table-wrap'}, [rtbl])]));
   }
+
+  // Fund-tracing write-ups rendered inline on this tab
+  [['fund-trace', 'Fund Trace — where the funds went'],
+   ['fund-source', 'Funding Source — how the attacker was funded']].forEach(([key, title]) => {
+    const md = (D.findings || {})[key];
+    if (md) {
+      container.appendChild(el('div', {class: 'section-title', text: title, style: 'margin-top: 32px;'}));
+      container.appendChild(el('div', {class: 'card'}, [el('div', {class: 'findings-content', html: renderMarkdown(md)})]));
+    }
+  });
+
+  // Raw transfer ledger — low-signal, kept at the bottom and collapsed by default
+  const shown = Math.min(dedupedEdges.length, 100);
+  container.appendChild(el('div', {style: 'margin-top: 32px;'},
+    [collapsible(`All Transfers (${dedupedEdges.length}${dedupedEdges.length > 100 ? ', showing 100' : ''})`, (body) => {
+      const tbl = el('table');
+      tbl.innerHTML = '<thead><tr><th>From</th><th>To</th><th>Amount</th><th>Token</th><th>Tx</th><th>Time</th></tr></thead>';
+      const tbody = el('tbody');
+      dedupedEdges.slice(0, 100).forEach(e => {
+        const tr = el('tr');
+        const tdF = el('td'); tdF.appendChild(addrEl(e.from, explorerUrl)); tr.appendChild(tdF);
+        const tdT = el('td'); tdT.appendChild(addrEl(e.to, explorerUrl)); tr.appendChild(tdT);
+        tr.appendChild(el('td', {text: fmtWei(e.value, tokenDecimals[(e.token||'').toUpperCase()] || 18)}));
+        tr.appendChild(el('td', {text: e.token || '?'}));
+        const tdTx = el('td'); tdTx.appendChild(txLink(e.tx_hash, explorerUrl)); tr.appendChild(tdTx);
+        tr.appendChild(el('td', {text: e.timestamp ? e.timestamp.replace('T', ' ').slice(0, 19) : '—', style: 'white-space: nowrap; font-size: 11px;'}));
+        tbody.appendChild(tr);
+      });
+      tbl.appendChild(tbody);
+      body.appendChild(el('div', {class: 'card', style: 'margin-top: 8px;'}, [el('div', {class: 'table-wrap'}, [tbl])]));
+    })]));
 })();
 
 // ── Addresses Tab ──
@@ -1103,64 +1150,27 @@ hm.appendChild(badge(C.status, C.status === 'active' ? 'yellow' : 'green'));
     return;
   }
 
+  const nameOf = (info) => {
+    const k = info.classify && info.classify.known_entity;
+    return (info.labels && info.labels[0]) || (typeof k === 'object' ? (k && k.label) : k) || '—';
+  };
+  container.appendChild(el('div', {class: 'section-title', text: `Addresses (${entries.length})`}));
+  const tbl = el('table');
+  tbl.innerHTML = '<thead><tr><th>Address</th><th>Role</th><th>Name / Entity</th><th>Type</th><th>Balance</th><th>Notes</th></tr></thead>';
+  const tbody = el('tbody');
   entries.forEach(([addr, info]) => {
-    const card = el('div', {class: 'card'});
-    const header = el('div', {class: 'card-header'});
-    const left = el('div', {style: 'display: flex; align-items: center; gap: 8px;'});
-    left.appendChild(addrEl(addr, explorerUrl));
-    left.appendChild(roleBadge(info.role));
-    header.appendChild(left);
-    card.appendChild(header);
-
-    if (info.reason) card.appendChild(el('p', {text: info.reason, style: 'font-size: 13px; color: var(--text-dim); margin-bottom: 10px;'}));
-
-    const classify = info.classify;
-    if (classify) {
-      const grid = el('div', {style: 'display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 13px;'});
-      const addRow = (label, val) => { grid.appendChild(el('span', {text: label, style: 'color: var(--text-dim);'})); grid.appendChild(el('span', {text: val})); };
-      addRow('Type:', classify.type || '—');
-      if (classify.balance_formatted) addRow('Balance:', classify.balance_formatted);
-      if (classify.is_proxy) addRow('Proxy:', classify.proxy_type || 'yes');
-      if (classify.implementation) addRow('Implementation:', classify.implementation);
-      if (classify.known_entity) addRow('Known Entity:', typeof classify.known_entity === 'object' ? classify.known_entity.label : classify.known_entity);
-      if (classify.admin_info) {
-        const admin = classify.admin_info;
-        if (admin.owner) addRow('Owner:', admin.owner);
-        if (admin.proxy_admin) addRow('Admin:', admin.proxy_admin);
-      }
-      if (classify.is_lp_pair) addRow('LP Pair:', 'Yes');
-      card.appendChild(grid);
-
-      // Token balances
-      const balances = classify.token_balances || [];
-      if (balances.length) {
-        card.appendChild(collapsible(`Token Balances (${balances.length})`, (body) => {
-          const tbl = el('table');
-          tbl.innerHTML = '<thead><tr><th>Token</th><th>Balance</th></tr></thead>';
-          const tbody = el('tbody');
-          balances.forEach(b => {
-            const tr = el('tr');
-            tr.appendChild(el('td', {text: b.token_symbol || b.token_name || b.token_address || '?'}));
-            tr.appendChild(el('td', {text: b.balance_formatted || b.balance || '?'}));
-            tbody.appendChild(tr);
-          });
-          tbl.appendChild(tbody);
-          body.appendChild(el('div', {class: 'table-wrap'}, [tbl]));
-        }));
-      }
-    }
-
-    // Evidence references
-    if (info.evidence && info.evidence.length) {
-      card.appendChild(collapsible('Evidence', (body) => {
-        const ul = el('ul', {style: 'font-size: 12px; font-family: var(--font-mono); padding-left: 18px;'});
-        info.evidence.forEach(e => ul.appendChild(el('li', {text: e})));
-        body.appendChild(ul);
-      }));
-    }
-
-    container.appendChild(card);
+    const c = info.classify || {};
+    const tr = el('tr');
+    const tdA = el('td'); tdA.appendChild(addrEl(addr, explorerUrl)); tr.appendChild(tdA);
+    const tdR = el('td'); tdR.appendChild(roleBadge(info.role)); tr.appendChild(tdR);
+    tr.appendChild(el('td', {text: nameOf(info)}));
+    tr.appendChild(el('td', {text: c.type || '—'}));
+    tr.appendChild(el('td', {text: c.balance_formatted || '—', style: 'white-space:nowrap;'}));
+    tr.appendChild(el('td', {text: info.reason || '—', style: 'font-size:12px; color:var(--text-dim); max-width:380px;'}));
+    tbody.appendChild(tr);
   });
+  tbl.appendChild(tbody);
+  container.appendChild(el('div', {class: 'table-wrap'}, [tbl]));
 })();
 
 // ── Technical Tab ──
@@ -1703,6 +1713,7 @@ hm.appendChild(badge(C.status, C.status === 'active' ? 'yellow' : 'green'));
 // ── Evidence Tab ──
 (function renderEvidence() {
   const container = $('#tab-evidence');
+  if (!container) return;  // Evidence tab removed from report
   const index = D.evidence_index || [];
 
   if (!index.length) {
@@ -1749,6 +1760,7 @@ hm.appendChild(badge(C.status, C.status === 'active' ? 'yellow' : 'green'));
 // ── Timeline Tab ──
 (function renderTimeline() {
   const container = $('#tab-timeline');
+  if (!container) return;  // Timeline tab removed from report
   const journal = D.journal || [];
 
   if (!journal.length) {
