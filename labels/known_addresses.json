@@ -115,5 +115,22 @@
     "0xa96be652a08d9905f15b7fbe2255708709becd09": "ChangeNOW: Hot Wallet 2",
     "0x7bacd3e83522f484bc5128ea93bf7290f1f1b9e5": "SimpleSwap [MED \u2014 community tag]",
     "0xcdd37ada79f589c15bd4f8fd2083dc88e34a2af2": "SideShift: Hot Wallet (no-KYC; PUBLIC status API sideshift.ai/api/v2/shifts/{id})"
+  },
+  "defi_infra": {
+    "_note": "Canonical mainnet DeFi infrastructure. These are liquidity/settlement venues, NOT counterparties: a transfer FROM one is a swap/withdraw, not a 'distribution'. Grow this list — a null known_entity must NOT be upgraded to a specific protocol label by guesswork.",
+    "0xba1333333333a1ba1108e8412f11850a5c319ba9": "Balancer V3: Vault (swap/settlement singleton; a transfer out = a swap, not a seed/airdrop)",
+    "0xbbbbbbbbbb9cc5e90e3b3af64bdaf62c37eeffcb": "Morpho Blue (lending + flash-loan singleton)",
+    "0xf6e72db5454dd049d0788e411b06cfaf16853042": "MakerDAO: DssLitePsm (USDC PSM; DAI<->USDC 1:1)",
+    "0xa3931d71877c0e7a3148cb7eb4463524fec27fbd": "Sky: sUSDS (Savings USDS, ERC-4626)",
+    "0x377c3bd93f2a2984e1e7be6a5c22c525ed4a4815": "Spark: spUSDC vault [case-derived label]"
+  },
+  "summerfi": {
+    "_note": "SummerFi / Lazy Summer Protocol contracts, verified in case 2026-07-06-summerfi-vgusdc. FleetCommander = ERC-4626 meta-vault; Arks = strategy adapters summed into NAV.",
+    "0x98c49e13bf99d7cad8069faa2a370933ec9ecf17": "SummerFi: LazyVault_LowerRisk_USDC (FleetCommander, LVUSDC) [exploit victim]",
+    "0xe9cda459bed6dcfb8ac61cd8ce08e2d52370cb06": "SummerFi: LazyVault_HigherRisk_USDC (FleetCommander) [exploit victim]",
+    "0x61d7063041d83c8ca3e42c39181dfd14b3bc76c2": "SummerFi: SiloManagedVaultArk (absorbed the donated 19.55B vgUSDC)",
+    "0xfd899321b1fd8d75e255119766d9097c98568519": "SummerFi: ERC4626Ark (Term/tsvSummerfiUSDC)",
+    "0x8399c8fc273bd165c346af74a02e65f10e4fd78f": "vgUSDC: Silo 'Varlamore USDC Growth' vault token (impaired underlying, Stream/Nov-2025; stale convertToAssets)",
+    "0x91e4482cf58ac14d8dc25290d828b2a4d9492ba4": "SummerFi: Guardian Multisig (6-of-8; pause + cap-to-zero only) [per post-mortem]"
   }
 }

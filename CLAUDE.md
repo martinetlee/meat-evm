@@ -37,6 +37,12 @@ not a victim); `check <case>` is a hard gate that fails unless value conserves (
 labeled), **loss is attributed** (attacker gains matched by a `victim`-role address — either a priced
 loss or absorbing an illiquid token the attacker dumped onto it; the gate names dump recipients as
 `victim_candidates`), attacker/victim labels have provenance, and money-out txs are fetched in full.
+The gate also emits **warnings** (don't fail the build, but surface skipped work): `label_grounding`
+(an entity label whose `classify` evidence has `known_entity=null` and isn't in `labels/known_addresses.json`
+— the null→narrative guess, e.g. mislabeling Balancer V3 as "SummerFi Vault"; clear it by adding to the
+registry or setting `label_source`), `victim_set_consistency` (summary counts / `loss_by_vault` don't
+reconcile with labeled roles), and `suspect_token_price` (DeFiLlama priced a USD-named non-canonical
+token far off $1 — stale for impaired/collapsed tokens like xUSD; never trust its `usd_value`).
 A Stop hook runs `check` automatically. Set `eth_price_usd` in case.json to value ETH/WETH too.
 Cross-chain (fund tracing): `btc-trace`, `btc-tx`, `thorchain` (+`--protocol maya`), `debridge`,
 `orbiter`, `intents` — deterministic Bitcoin peel-chain following (Blockstream), THORChain/Maya memo

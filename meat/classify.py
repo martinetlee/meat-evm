@@ -54,6 +54,8 @@ def _load_known_addresses() -> dict:
                     continue
                 if isinstance(addrs, dict):
                     for addr, label in addrs.items():
+                        if addr.startswith("_"):
+                            continue
                         flat[addr.lower()] = {"label": label, "category": category}
             _known_addresses = flat
         except (json.JSONDecodeError, IOError):

@@ -96,6 +96,36 @@ def _get_evidence(case: str | None) -> EvidenceStore | None:
     return EvidenceStore(case_dir)
 
 
+def _address_grounded_in_evidence(case: str | None, address: str) -> bool | None:
+    """Return True if `address` appears in any already-fetched evidence file for the
+    case, False if it does not, or None if there's no case/evidence to check against.
+
+    Guards against free-typed / corrupted addresses (e.g. a mangled vault address that
+    never appears in the trace) being classified into junk evidence. An address worth
+    labeling in a case should already show up in a fetched tx/trace/receipt/txlist."""
+    case = _resolve_case(case)
+    if not case:
+        return None
+    ev_dir = get_config().cases_dir / case / "evidence"
+    if not ev_dir.is_dir():
+        return None
+    needle = address.lower().replace("0x", "")
+    if len(needle) != 40:
+        return None
+    found_any = False
+    for p in ev_dir.rglob("*.json"):
+        # skip the classify store itself — self-reference isn't grounding
+        if p.parent.name == "classify":
+            continue
+        found_any = True
+        try:
+            if needle in p.read_text().lower():
+                return True
+        except (IOError, UnicodeDecodeError):
+            continue
+    return False if found_any else None
+
+
 @click.group()
 def cli():
     """MEAT-EVM: Martinet's Exploit Analysis Tool for EVM"""
@@ -844,8 +874,17 @@ def classify(address, chain, case):
     if not rpc:
         meta.warnings.append("No RPC — token/admin/proxy/LP detection unavailable")
 
+    grounded = _address_grounded_in_evidence(case, address)
+    if grounded is False:
+        meta.warnings.append(
+            "address does NOT appear in any fetched evidence for this case — verify it "
+            "is not a typo/corrupted address before trusting this classification"
+        )
+
     result = classify_address(address, rpc, explorer)
     result["chain"] = chain
+    if grounded is not None:
+        result["grounded_in_evidence"] = grounded
 
     evidence = _get_evidence(case)
     if evidence:

@@ -204,3 +204,134 @@ def test_check_fails_when_money_out_tx_not_fetched(tmp_path):
     report = analysis.check_case(tmp_path)
     assert report["passed"] is False
     assert any(v["invariant"] == "money_out_tx_fetched" for v in report["violations"])
+
+
+# --------------------------------------------------------------------------- #
+# Warning invariants: label grounding, victim-set consistency, suspect prices
+# --------------------------------------------------------------------------- #
+
+UNREG = "0x1111111111111111111111111111111111111111"   # not in the registry
+UNREG2 = "0x2222222222222222222222222222222222222222"
+UNREG3 = "0x3333333333333333333333333333333333333333"
+UNREG4 = "0x4444444444444444444444444444444444444444"
+BAL_V3 = "0xba1333333333a1ba1108e8412f11850a5c319ba9"  # in labels/known_addresses.json
+
+
+def _write_classify(tmp_path, addr, data):
+    cdir = tmp_path / "evidence" / "classify"
+    cdir.mkdir(parents=True, exist_ok=True)
+    (cdir / f"{addr}.json").write_text(json.dumps({"_meta": {}, "data": data}))
+
+
+def _warns(report, invariant):
+    return [w for w in report["warnings"] if w["invariant"] == invariant]
+
+
+def test_label_grounding_flags_null_classify_narrative_label(tmp_path):
+    # The 0xba13 failure mode: classify found nothing, analyst invented a label.
+    _write_case(tmp_path, {"name": "t"},
+                {UNREG: {"role": "victim", "labels": ["Fake Protocol Vault"],
+                         "provenance_waived": "x"}}, {})
+    _write_classify(tmp_path, UNREG, {"known_entity": None, "is_token": False})
+
+    report = analysis.check_case(tmp_path)
+    warns = _warns(report, "label_grounding")
+    assert len(warns) == 1
+    assert UNREG in warns[0]["detail"]
+    assert "Fake Protocol Vault" in warns[0]["detail"]
+    # warnings must not fail the gate
+    assert not any(v["invariant"] == "label_grounding" for v in report["violations"])
+
+
+def test_label_grounding_exemptions(tmp_path):
+    addresses = {
+        # in the registry -> grounded, even with null classify
+        BAL_V3: {"role": "intermediate", "labels": ["Balancer V3: Vault"]},
+        # label_source records how the label was derived -> grounded
+        UNREG: {"role": "victim", "labels": ["Documented Vault"],
+                "label_source": "verified via createVault event in tx 0xabc"},
+        # classify itself grounded the identity
+        UNREG2: {"role": "victim", "labels": ["Known Proto"]},
+        # a token identified by its on-chain metadata
+        UNREG3: {"role": "intermediate", "labels": ["vgUSDC token"]},
+        # attacker labels are operational, not entity claims
+        UNREG4: {"role": "attacker", "labels": ["Attacker EOA"]},
+    }
+    _write_case(tmp_path, {"name": "t"}, addresses, {})
+    _write_classify(tmp_path, BAL_V3, {"known_entity": None, "is_token": False})
+    _write_classify(tmp_path, UNREG, {"known_entity": None, "is_token": False})
+    _write_classify(tmp_path, UNREG2, {"known_entity": "Known Proto"})
+    _write_classify(tmp_path, UNREG3, {"known_entity": None, "is_token": True})
+    _write_classify(tmp_path, UNREG4, {"known_entity": None, "is_token": False})
+
+    report = analysis.check_case(tmp_path)
+    assert _warns(report, "label_grounding") == []
+
+
+def test_label_grounding_silent_without_classify_record(tmp_path):
+    # No classify evidence at all -> the invariant has nothing to contradict.
+    _write_case(tmp_path, {"name": "t"},
+                {UNREG: {"role": "victim", "labels": ["Unclassified Vault"]}}, {})
+
+    report = analysis.check_case(tmp_path)
+    assert _warns(report, "label_grounding") == []
+
+
+def test_victim_set_consistency_flags_count_mismatch(tmp_path):
+    case = {"name": "t", "summary": {"victim_addresses": 2, "attacker_addresses": 1}}
+    addresses = {
+        ATTACKER: {"role": "attacker", "provenance_waived": "op"},
+        ARK: {"role": "victim", "provenance_waived": "vault"},  # only 1 victim, not 2
+    }
+    _write_case(tmp_path, case, addresses, {})
+
+    report = analysis.check_case(tmp_path)
+    warns = _warns(report, "victim_set_consistency")
+    assert len(warns) == 1
+    assert "victim_addresses=2" in warns[0]["detail"]
+
+
+def test_victim_set_consistency_flags_unlabeled_loss_by_vault(tmp_path):
+    case = {"name": "t", "summary": {"loss_by_vault": {
+        f"Vault X ({UNREG})": 123456,
+        f"Vault Y ({ARK})": 654321,
+        "_note": "keys starting with underscore are skipped",
+    }}}
+    addresses = {ARK: {"role": "victim", "provenance_waived": "vault"}}
+    _write_case(tmp_path, case, addresses, {})
+
+    report = analysis.check_case(tmp_path)
+    warns = _warns(report, "victim_set_consistency")
+    assert len(warns) == 1          # Vault X only; Vault Y's ARK is a victim
+    assert "Vault X" in warns[0]["detail"]
+
+
+def test_suspect_usd_prices_unit():
+    tx = {"net_flows": {
+        UNREG: {
+            "xUSD": {"formatted": "1000", "price_usd": 0.18},   # collapsed -> flag
+            "gtUSDC": {"formatted": "1", "price_usd": 1.12},    # off-peg -> flag
+            "sUSDC": {"formatted": "1", "price_usd": 1.03},     # within 5% -> ok
+            "USDC": {"formatted": "1", "price_usd": 1.12},      # canonical -> exempt
+            "WETH": {"formatted": "1", "price_usd": 3000.0},    # not USD-named -> exempt
+            "noprice": {"formatted": "1"},                       # no price -> ok
+        },
+    }}
+    out = analysis._suspect_usd_prices(tx)
+    assert out == {"xUSD": 0.18, "gtUSDC": 1.12}
+
+
+def test_check_warns_on_suspect_token_price(tmp_path):
+    h = "0x" + "c" * 64
+    tx = {
+        "token_transfers": [{"x": 1}],
+        "net_flows": {
+            UNREG: {"xUSD": {"formatted": "1000", "price_usd": 0.18}},
+        },
+    }
+    _write_case(tmp_path, {"name": "t", "attack_tx": h}, {}, {h: tx})
+
+    report = analysis.check_case(tmp_path)
+    warns = _warns(report, "suspect_token_price")
+    assert len(warns) == 1
+    assert "xUSD=$0.1800" in warns[0]["detail"]

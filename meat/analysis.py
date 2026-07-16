@@ -9,7 +9,10 @@ error of concluding an attack without identifying who actually lost the money.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
+
+_ADDR_RE = re.compile(r"0x[0-9a-fA-F]{40}")
 
 # Exact canonical symbols of fungible USD stablecoins. Matched case-sensitively
 # and exactly so that manipulated vault tokens whose symbols merely *contain*
@@ -241,6 +244,45 @@ def analyze_tx_value(tx_data: dict, labeled: dict, eth_price: float | None = Non
     }
 
 
+def _load_registry() -> set[str]:
+    """Lowercased addresses known in labels/known_addresses.json — the external
+    ground truth for entity labels. An address here is 'grounded'; one that isn't
+    must not be given a specific entity label by guesswork."""
+    f = Path(__file__).parent.parent / "labels" / "known_addresses.json"
+    out: set[str] = set()
+    try:
+        raw = json.loads(f.read_text())
+    except (json.JSONDecodeError, IOError, OSError):
+        return out
+    for cat, addrs in raw.items():
+        if cat.startswith("_") or not isinstance(addrs, dict):
+            continue
+        for a in addrs:
+            if not a.startswith("_"):
+                out.add(a.lower())
+    return out
+
+
+def _suspect_usd_prices(tx_data: dict, tol: float = 0.05) -> dict[str, float]:
+    """USD-named, non-canonical tokens whose DeFiLlama price deviates > tol from
+    $1 — the stale/impaired-token signal (e.g. collapsed xUSD priced at $1.27).
+    These prices drive net_flows' usd_value annotations and must not be trusted."""
+    out: dict[str, float] = {}
+    for _addr, tokens in (tx_data.get("net_flows") or {}).items():
+        for sym, detail in (tokens or {}).items():
+            if not isinstance(detail, dict) or sym in STABLE_SYMBOLS:
+                continue
+            if "usd" not in sym.lower():
+                continue
+            try:
+                p = float(detail.get("price_usd"))
+            except (TypeError, ValueError):
+                continue
+            if p > 0 and abs(p - 1.0) > tol:
+                out[sym] = p
+    return out
+
+
 def _decisive_txs(case: dict) -> list[str]:
     hashes = []
     for key in ("attack_tx", "monetization_tx", "realized_profit_tx"):
@@ -429,6 +471,86 @@ def check_case(case_dir: Path, min_usd: float = 100_000.0) -> dict:
                           "but no findings file documents a full value-flow trace. "
                           "Only state negatives you have traced end-to-end.",
             })
+
+    # --- Invariant 5 (warn): label grounding — no null->narrative guesses ---- #
+    # The 0xba13 failure: classify returned known_entity=null and the analyst
+    # filled the void with a specific, narrative-convenient entity label. If a
+    # classify record EXISTS for an address, found no known_entity, the address
+    # is not in the registry, and no label_source records how we know — the
+    # entity label is unsourced. (Attacker labels are operational, not entity
+    # claims, so they're exempt.)
+    registry = _load_registry()
+    classify_dir = ev / "classify"
+    ungrounded: list[str] = []
+    for a, info in labeled.items():
+        if info.get("role") == "attacker":
+            continue
+        if a in registry or info.get("label_source"):
+            continue
+        ce = _load_envelope(classify_dir / f"{a}.json") if classify_dir.exists() else None
+        # Skip when classify grounds the identity itself: an entity from the
+        # registry (known_entity) or a token identified by its on-chain metadata
+        # (is_token — its symbol is not a "narrative guess").
+        if ce is None or ce.get("known_entity") or ce.get("is_token"):
+            continue
+        claimed = (info.get("classify") or {}).get("known_entity") or ", ".join(info.get("labels") or [])
+        if claimed:
+            ungrounded.append(f"{a} ('{claimed}')")
+    if ungrounded:
+        warnings.append({
+            "invariant": "label_grounding",
+            "detail": f"{len(ungrounded)} address(es) carry a specific entity label whose classify "
+                      f"evidence has known_entity=null and are not in labels/known_addresses.json — "
+                      f"the null->narrative failure mode (cf. 0xba13 mislabeled 'SummerFi Vault' when "
+                      f"it was Balancer V3). Add each to the registry, or set label_source to record "
+                      f"how it was derived: " + "; ".join(ungrounded),
+        })
+
+    # --- Invariant 6 (warn): summary counts & per-vault loss reconcile ------- #
+    # Catches victim-set drift (declaring N victims but labeling a different
+    # number is how a real victim vault goes unlabeled and its loss unattributed).
+    summ = case.get("summary") or {}
+    role_counts: dict[str, int] = {}
+    for info in labeled.values():
+        r = info.get("role")
+        if r:
+            role_counts[r] = role_counts.get(r, 0) + 1
+    for role, key in (("attacker", "attacker_addresses"), ("victim", "victim_addresses")):
+        declared = summ.get(key)
+        actual = role_counts.get(role, 0)
+        if isinstance(declared, int) and declared != actual:
+            warnings.append({
+                "invariant": "victim_set_consistency",
+                "detail": f"case.summary.{key}={declared} but addresses.json has {actual} "
+                          f"address(es) with role='{role}'. Reconcile — a missing victim is "
+                          f"how loss goes unattributed.",
+            })
+    lbv = summ.get("loss_by_vault")
+    if isinstance(lbv, dict):
+        for k in lbv:
+            if k.startswith("_"):
+                continue
+            addrs = [x.lower() for x in _ADDR_RE.findall(k)]
+            if addrs and not any(_role(labeled, x) == "victim" for x in addrs):
+                warnings.append({
+                    "invariant": "victim_set_consistency",
+                    "detail": f"loss_by_vault entry '{k}' references no role='victim' address in "
+                              f"addresses.json. Label the vault that bore this loss as the victim.",
+                })
+
+    # --- Invariant 7 (warn): suspect DeFiLlama USD prices -------------------- #
+    suspect: dict[str, float] = {}
+    for _h, data in fetched.items():
+        suspect.update(_suspect_usd_prices(data))
+    if suspect:
+        listed = ", ".join(f"{s}=${p:,.4f}" for s, p in sorted(suspect.items()))
+        warnings.append({
+            "invariant": "suspect_token_price",
+            "detail": f"net_flows carries DeFiLlama USD prices for USD-named non-canonical "
+                      f"token(s) deviating from $1: {listed}. The gate ignores these (only exact "
+                      f"stablecoins count as money), but do NOT trust their usd_value annotations "
+                      f"— they are stale for impaired/collapsed tokens (e.g. xUSD at $1.27).",
+        })
 
     return {
         "passed": len(violations) == 0,
