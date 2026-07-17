@@ -27,7 +27,13 @@ class ChainConfig:
 
     @property
     def explorer_api_key(self) -> str | None:
-        return os.environ.get(self.explorer_api_env)
+        key = os.environ.get(self.explorer_api_env)
+        if (key is None or key.strip() == "") and "api.etherscan.io/v2" in self.explorer_base:
+            # Etherscan V2 uses a single unified key across all chains (selected via
+            # the chainid param), so fall back to ETHERSCAN_API_KEY when a chain's
+            # dedicated key env var isn't set.
+            key = os.environ.get("ETHERSCAN_API_KEY")
+        return key
 
     def has_rpc(self) -> bool:
         url = self.rpc_url

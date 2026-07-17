@@ -485,7 +485,9 @@ def check_case(case_dir: Path, min_usd: float = 100_000.0) -> dict:
     for a, info in labeled.items():
         if info.get("role") == "attacker":
             continue
-        if a in registry or info.get("label_source"):
+        # `label_source` is the dedicated field; `source` is what the `meat label
+        # -s/--source` CLI flag writes, so accept either as a grounding record.
+        if a in registry or info.get("label_source") or info.get("source"):
             continue
         ce = _load_envelope(classify_dir / f"{a}.json") if classify_dir.exists() else None
         # Skip when classify grounds the identity itself: an entity from the
