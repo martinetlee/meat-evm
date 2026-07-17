@@ -178,6 +178,20 @@ tbody tr:hover td { background: var(--surface2); }
 .findings-content blockquote { border-left: 3px solid var(--accent-dim); background: var(--surface2); padding: 8px 16px; border-radius: 0 var(--r-sm) var(--r-sm) 0; color: var(--text-dim); margin: 12px 0; }
 .findings-content hr { border: none; border-top: 1px solid var(--border); margin: 24px 0; }
 
+/* Containment verdict banner */
+.verdict-banner { display: flex; align-items: flex-start; gap: 14px; padding: 16px 18px; border-radius: var(--r); margin-bottom: 22px; border: 1px solid; }
+.verdict-ongoing { background: hsl(0 60% 14% / 0.5); border-color: hsl(0 70% 45%); }
+.verdict-contained { background: hsl(145 45% 12% / 0.5); border-color: hsl(145 55% 40%); }
+.verdict-icon { font-size: 22px; line-height: 1.15; }
+.verdict-ongoing .verdict-icon { color: hsl(0 80% 66%); }
+.verdict-contained .verdict-icon { color: hsl(145 65% 60%); }
+.verdict-label { font-size: 15px; font-weight: 700; letter-spacing: 0.02em; }
+.verdict-ongoing .verdict-label { color: hsl(0 80% 73%); }
+.verdict-contained .verdict-label { color: hsl(145 60% 69%); }
+.verdict-sub { font-size: 13px; color: var(--text-dim); margin-top: 3px; line-height: 1.55; }
+.tab.tab-alert { color: hsl(0 80% 70%); }
+.tab.tab-alert.active { color: hsl(0 85% 72%); border-bottom-color: hsl(0 80% 55%); }
+
 /* Section heading */
 .section-title { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.09em; color: var(--text-dim); margin-bottom: 16px; padding-bottom: 10px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px; }
 .section-title::before { content: ''; width: 3px; height: 14px; border-radius: 2px; background: var(--accent); }
@@ -445,6 +459,38 @@ const D = REPORT_DATA;
 const C = D.case;
 const explorerUrl = C.explorer_url;
 
+// ── Containment tab (injected only when a containment finding exists) ──
+// Placed second, right after Overview, so a responder reaches the stop-the-bleed
+// plan immediately. Alert-styled when the incident is still ongoing.
+const CONTAINMENT_MD = (D.findings || {}).containment;
+if (CONTAINMENT_MD) {
+  const tabsEl = $('#tabs');
+  const ongoing = ((C.summary || {}).incident_status || '').toLowerCase() === 'ongoing';
+  const cTab = el('div', {class: 'tab' + (ongoing ? ' tab-alert' : ''), 'data-tab': 'containment',
+                          text: ongoing ? '● Containment' : 'Containment'});
+  tabsEl.insertBefore(cTab, tabsEl.children[1] || null);
+  const ov = $('#tab-overview');
+  ov.parentNode.insertBefore(el('div', {class: 'tab-content', id: 'tab-containment'}), ov.nextSibling);
+}
+
+// Verdict banner shared by Overview + Containment tabs.
+function verdictBanner(summary) {
+  const st = ((summary || {}).incident_status || '').toLowerCase();
+  if (st !== 'ongoing' && st !== 'contained') return null;
+  const ongoing = st === 'ongoing';
+  const banner = el('div', {class: `verdict-banner ${ongoing ? 'verdict-ongoing' : 'verdict-contained'}`});
+  banner.appendChild(el('span', {class: 'verdict-icon', text: ongoing ? '⚠' : '✓'}));
+  const txt = el('div');
+  txt.appendChild(el('div', {class: 'verdict-label',
+    text: ongoing ? 'ONGOING — active incident' : 'CONTAINED'}));
+  const risk = summary.at_risk_usd ? ` — ${summary.at_risk_usd} still reachable` : '';
+  txt.appendChild(el('div', {class: 'verdict-sub', text: ongoing
+    ? `Funds remain exploitable${risk}. See the Containment tab for which address must send which transaction to stop further losses.`
+    : `No further on-chain losses reachable${risk}. See the Containment tab for the evidence.`}));
+  banner.appendChild(txt);
+  return banner;
+}
+
 // ── Tab Navigation ──
 $$('.tab').forEach(tab => {
   tab.onclick = () => {
@@ -467,6 +513,10 @@ hm.appendChild(badge(C.status, C.status === 'active' ? 'yellow' : 'green'));
 (function renderOverview() {
   const container = $('#tab-overview');
   const summary = C.summary || {};
+
+  // Containment verdict up top — the most action-relevant signal for a live case.
+  const vb = verdictBanner(summary);
+  if (vb) container.appendChild(vb);
 
   // Stats
   const stats = el('div', {class: 'stats-grid'});
@@ -551,8 +601,9 @@ hm.appendChild(badge(C.status, C.status === 'active' ? 'yellow' : 'green'));
     container.appendChild(card);
   }
 
-  // Other findings as collapsible (fund-trace/fund-source render on the Fund Flow tab instead)
-  const FUND_FINDINGS = ['fund-trace', 'fund-source'];
+  // Other findings as collapsible (fund-trace/fund-source render on the Fund Flow tab;
+  // containment renders on its own tab)
+  const FUND_FINDINGS = ['fund-trace', 'fund-source', 'containment'];
   const otherFindings = Object.entries(D.findings || {})
     .filter(([name]) => name !== 'analysis' && !FUND_FINDINGS.includes(name));
   if (otherFindings.length) {
@@ -562,6 +613,18 @@ hm.appendChild(badge(C.status, C.status === 'active' ? 'yellow' : 'green'));
       }));
     });
   }
+})();
+
+// ── Containment Tab ──
+(function renderContainment() {
+  const md = CONTAINMENT_MD;
+  const container = $('#tab-containment');
+  if (!md || !container) return;
+  const vb = verdictBanner(C.summary || {});
+  if (vb) container.appendChild(vb);
+  container.appendChild(el('div', {class: 'section-title', text: 'Incident Containment'}));
+  container.appendChild(el('div', {class: 'card'},
+    [el('div', {class: 'findings-content', html: renderMarkdown(md)})]));
 })();
 
 // ── Transactions Tab ──

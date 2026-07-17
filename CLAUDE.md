@@ -17,6 +17,7 @@ pip install -r requirements.txt
 | `/meat-recon` | Expand from partial info to full picture |
 | `/meat-trace` | Track where stolen funds went |
 | `/meat-analyze` | Deep-dive into the vulnerability |
+| `/meat-contain` | Decide if the incident is still ONGOING (more to hack / sibling contracts share the flaw) and, assuming the client holds privileged roles, produce an ordered stop-the-bleed plan: which address sends which tx to which contract |
 | `/meat-poc` | Create a Foundry PoC reproduction |
 | `/meat-monitor` | Watch active cases for new activity |
 
@@ -30,6 +31,18 @@ Commands: `parse`, `tx`, `source`, `abi`, `classify`, `decode`
 
 Phase 2 commands: `txlist`, `transfers`, `flow`
 Phase 3 commands: `trace`, `storage`, `logs`, `block`
+Containment commands: `deployments` — `deployments <deployer> [--enrich] [--depth N]` enumerates the
+protocol's full contract surface (scans the deployer's normal txlist for direct deploys + internal
+txlist for factory CREATE/CREATE2, following children `--depth` levels). `--enrich` classifies each
+contract so `summary.holding_value` / `summary.not_paused_with_value` surface which **sibling
+contracts still hold funds and aren't paused** — the "is there more to hack" question. `classify`
+now also reports `emergency_controls` (pause/freeze/upgrade/guardian functions from the verified ABI
++ a live `paused()` call) so you can see whether a contract's vulnerable path is still live and which
+lever stops it. For proxies it follows through to the **implementation** ABI automatically (levers
+tagged `source: proxy|implementation`; `implementation_abi_unverified` flags an unverified impl).
+**Beacon proxies** resolve one hop further — `beacon` field holds the beacon, `implementation` the
+resolved logic, and the beacon's own `upgradeTo` lever is scanned (`source: beacon`).
+Drives the `/meat-contain` skill.
 Correctness commands: `profit`, `provenance`, `check` — `profit <eoa> --block <blk>` finds the tx that
 realizes the largest net stablecoin gain (the money-out tx is rarely the one you were handed);
 `provenance <addr>` shows the earliest inbound source of each token (single-source = sybil red flag,

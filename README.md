@@ -80,6 +80,7 @@ python3 -m meat check 2024-03-13-euler                  # value conservation + l
 /meat-recon                # expand from partial info
 /meat-trace                # follow the money
 /meat-analyze              # vulnerability deep-dive
+/meat-contain              # ongoing? + privileged-role stop-the-bleed plan
 /meat-poc                  # Foundry PoC reproduction
 /meat-monitor euler-hack   # watch for new activity
 ```
@@ -92,7 +93,7 @@ python3 -m meat check 2024-03-13-euler                  # value conservation + l
 ┌─────────────────────────────────────────────────────────────┐
 │                     Claude Code Skills                       │
 │  /meat  /meat-recon  /meat-trace  /meat-analyze  /meat-poc   │
-│                     /meat-monitor                            │
+│              /meat-contain  /meat-monitor                    │
 │  ┌─────────────────────────────────────────────────────────┐ │
 │  │ Orchestration: Claude reads CLI output, reasons about   │ │
 │  │ exploits, writes findings to case directory             │ │
@@ -104,6 +105,7 @@ python3 -m meat check 2024-03-13-euler                  # value conservation + l
 │                                                              │
 │  quick · tx · classify · calltrace · source · abi · decode   │
 │  txlist · transfers · flow · funder · logs · storage · block │
+│  deployments                ← protocol contract surface      │
 │  profit · provenance · check      ← correctness gate         │
 │  btc-tx · btc-trace · thorchain · debridge · orbiter         │
 │  intents · case · label · annotate · report · trace-addresses│
@@ -200,14 +202,14 @@ Findings ──→ written to cases/<name>/findings/ (cites evidence)
 
 ---
 
-## CLI Commands (29 total)
+## CLI Commands (30 total)
 
 **Core analysis**
 | Command | Purpose |
 |---------|---------|
 | `quick` | **One-shot analysis**: tx hash or URL → decoded summary with USD in ~9 seconds |
 | `tx` | Full tx decode: transfers, approvals, WETH events, net flows, decoded logs, internal txs |
-| `classify` | Address classification: EOA/contract, proxy type, admin roles, LP pair, token balances |
+| `classify` | Address classification: EOA/contract, proxy type, admin roles, LP pair, token balances, `emergency_controls` (pause/freeze/upgrade/guardian fns + live `paused()` state; **follows proxies to the implementation ABI**) |
 | `calltrace` | Call trace: debug RPC → Tenderly → cast → explorer fallback chain |
 | `source` | Verified source code (Etherscan → Sourcify fallback) |
 | `abi` | Contract ABI with proxy resolution |
@@ -223,6 +225,11 @@ Findings ──→ written to cases/<name>/findings/ (cites evidence)
 | `logs` | Event log search by signature or topic |
 | `storage` | Storage slot read with `--compare-block` for before/after diffs |
 | `block` | Block info with transaction list |
+
+**Incident containment** — *is it still ongoing, and how do we stop it?*
+| Command | Purpose |
+|---------|---------|
+| `deployments` | Enumerate the protocol's full contract surface (deployer's direct + factory CREATE/CREATE2 deploys, `--depth N`). `--enrich` flags which **sibling contracts still hold value and aren't paused** — the "is there more to hack" question. Drives `/meat-contain` |
 
 **Correctness gate** — *don't conclude an exploit without finding who lost the money*
 | Command | Purpose |
@@ -245,7 +252,7 @@ Findings ──→ written to cases/<name>/findings/ (cites evidence)
 | `case` | Case lifecycle: `create`, `list`, `show` |
 | `label` | Assign role / name / confidence to an address |
 | `annotate` | Attach phase + purpose notes to call-trace nodes |
-| `report` | Generate an HTML report from collected evidence |
+| `report` | Generate an HTML report from collected evidence. Surfaces `findings/containment.md` as a dedicated **Containment tab** + a verdict banner (red ONGOING / green CONTAINED, from `summary.incident_status`) when a case has been through `/meat-contain` |
 | `trace-addresses` | Extract all unique addresses from a saved call trace |
 
 ### Output features
@@ -385,6 +392,7 @@ meat-evm/
 │   │   ├── meat-recon/         Expand from partial info
 │   │   ├── meat-trace/         Fund tracing
 │   │   ├── meat-analyze/       Vulnerability analysis
+│   │   ├── meat-contain/       Ongoing-incident verdict + stop-the-bleed plan
 │   │   ├── meat-poc/           Foundry PoC
 │   │   └── meat-monitor/       Case monitoring
 │   └── hooks/                Stop hook that runs `meat check` at wrap-up

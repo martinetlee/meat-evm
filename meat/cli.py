@@ -984,6 +984,161 @@ def txlist(address, chain, page, offset, start_block, end_block, internal, sort,
     _output(result)
 
 
+def _creations_from_normal(txs: list[dict], scanner: str) -> list[dict]:
+    """Contract-creation txs in a normal txlist: `to` empty + `contractAddress` set."""
+    out = []
+    for t in txs:
+        to = (t.get("to") or "").strip()
+        created = (t.get("contractAddress") or "").strip()
+        if to == "" and created and created != "0x" + "0" * 40:
+            # skip reverted deploys
+            if str(t.get("isError", "0")) == "1" or str(t.get("txreceipt_status", "1")) == "0":
+                continue
+            out.append({
+                "address": created.lower(),
+                "creation_tx": t.get("hash"),
+                "block": int(t["blockNumber"]) if t.get("blockNumber") else None,
+                "timestamp": int(t["timeStamp"]) if t.get("timeStamp") else None,
+                "via": f"direct (deployer {scanner.lower()})",
+            })
+    return out
+
+
+def _creations_from_internal(txs: list[dict], scanner: str) -> list[dict]:
+    """CREATE/CREATE2 internal txs: `type` is create* and `contractAddress` set."""
+    out = []
+    for t in txs:
+        if str(t.get("type", "")).lower() not in ("create", "create2"):
+            continue
+        created = (t.get("contractAddress") or "").strip()
+        if not created or created == "0x" + "0" * 40:
+            continue
+        if str(t.get("isError", "0")) == "1":
+            continue
+        out.append({
+            "address": created.lower(),
+            "creation_tx": t.get("hash"),
+            "block": int(t["blockNumber"]) if t.get("blockNumber") else None,
+            "timestamp": int(t["timeStamp"]) if t.get("timeStamp") else None,
+            "via": f"factory {scanner.lower()}",
+        })
+    return out
+
+
+@cli.command("deployments")
+@click.argument("deployer")
+@click.option("--chain", "-c", help="Chain name")
+@click.option("--case", help="Case name for evidence storage")
+@click.option("--depth", default=1, help="Follow factory-deployed children N levels (1 = direct deploys only)")
+@click.option("--start-block", default=0, help="Start block")
+@click.option("--end-block", default=99999999, help="End block")
+@click.option("--limit", "offset", default=1000, help="Max txs to scan per address (per page)")
+@click.option("--enrich", is_flag=True, help="Classify each contract: value-at-risk, verified, proxy, paused. Costs RPC/explorer calls per contract.")
+def deployments(deployer, chain, case, depth, start_block, end_block, offset, enrich):
+    """Enumerate all contracts a deployer created — the protocol's on-chain surface.
+
+    Scans the deployer's normal txlist (direct EOA deploys) and internal txlist
+    (factory CREATE/CREATE2). With --depth N, follows discovered contracts as
+    factories N levels deep. With --enrich, classifies each contract so you can
+    see which siblings still hold value and whether they are paused (the
+    'is there more to hack / are sibling contracts vulnerable' question).
+    """
+    chain_cfg = _get_chain_config(chain)
+    explorer = _get_explorer(chain_cfg)
+    rpc = _get_rpc(chain_cfg)
+    meta = Meta()
+    if not explorer:
+        _error(f"No explorer API key configured for {chain}")
+    meta.data_sources.append("explorer")
+    if enrich and not rpc:
+        meta.warnings.append("--enrich: no RPC — proxy/paused/admin/token-balance detection limited")
+
+    found: dict[str, dict] = {}
+    to_scan = [deployer.lower()]
+    scanned: set[str] = set()
+
+    for level in range(max(1, depth)):
+        next_scan: list[str] = []
+        for scanner in to_scan:
+            if scanner in scanned:
+                continue
+            scanned.add(scanner)
+            try:
+                normal = explorer.get_tx_list(scanner, start_block, end_block, 1, offset, "asc")
+                internal = explorer.get_internal_tx_list(scanner, start_block, end_block, 1, offset, "asc")
+            except ExplorerError as e:
+                meta.warnings.append(f"scan {scanner}: explorer error ({e})")
+                continue
+            if len(normal) >= offset:
+                meta.warnings.append(f"scan {scanner}: normal txlist hit page limit ({offset}) — deploys may be truncated; raise --limit")
+            if len(internal) >= offset:
+                meta.warnings.append(f"scan {scanner}: internal txlist hit page limit ({offset}) — deploys may be truncated; raise --limit")
+            for rec in _creations_from_normal(normal, scanner) + _creations_from_internal(internal, scanner):
+                addr = rec["address"]
+                if addr not in found:
+                    found[addr] = rec
+                    next_scan.append(addr)
+        to_scan = next_scan
+        if not to_scan:
+            break
+
+    contracts = sorted(found.values(), key=lambda r: (r.get("block") or 0))
+
+    if enrich and (rpc or explorer):
+        for rec in contracts:
+            try:
+                c = classify_address(rec["address"], rpc, explorer)
+            except Exception as e:
+                rec["enrich_error"] = str(e)
+                continue
+            # classify's token_balances is already filtered to non-zero holdings
+            # (field: balance_raw). Its presence == the contract holds that token.
+            nonzero_tokens = c.get("token_balances") or []
+            bal_wei = int(c["balance_wei"]) if c.get("balance_wei") else 0
+            rec["is_verified"] = c.get("is_verified")
+            rec["contract_name"] = (c.get("labels") or [None])[0]
+            rec["is_proxy"] = c.get("is_proxy")
+            rec["implementation"] = c.get("implementation")
+            rec["admin_info"] = c.get("admin_info")
+            rec["emergency_controls"] = c.get("emergency_controls")
+            rec["native_balance"] = c.get("balance_formatted")
+            rec["nonzero_token_count"] = len(nonzero_tokens)
+            rec["token_balances"] = nonzero_tokens
+            rec["holds_value"] = bal_wei > 0 or len(nonzero_tokens) > 0
+
+    result = {
+        "deployer": deployer,
+        "chain": chain,
+        "depth": depth,
+        "count": len(contracts),
+        "contracts": contracts,
+    }
+    if enrich:
+        def _paused(c):
+            return (c.get("emergency_controls") or {}).get("paused")
+        value = [c for c in contracts if c.get("holds_value")]
+        result["summary"] = {
+            "verified": sum(1 for c in contracts if c.get("is_verified")),
+            "proxies": sum(1 for c in contracts if c.get("is_proxy")),
+            "holding_value": [c["address"] for c in value],
+            # still operational and holding funds — the containment frontier.
+            # Split by whether a direct pause lever exists: paused==False has a
+            # switch to flip; paused==None holds value with NO pause() to call
+            # (contain via parent/admin/upgrade instead).
+            "live_pausable_with_value": [c["address"] for c in value if _paused(c) is False],
+            "live_no_pause_switch_with_value": [c["address"] for c in value if _paused(c) is None],
+            "paused_with_value": [c["address"] for c in value if _paused(c) is True],
+        }
+
+    if case:
+        evidence = _get_evidence(case)
+        if evidence:
+            evidence.save("deployments", deployer.lower(), result, chain)
+
+    result["_meta"] = meta.to_dict()
+    _output(result)
+
+
 @cli.command("transfers")
 @click.argument("target")
 @click.option("--chain", "-c", help="Chain name")

@@ -16,6 +16,20 @@ ADMIN_SIG = "0xf851a440"  # admin()
 DEFAULT_ADMIN_ROLE_SIG = "0xa217fddf"  # DEFAULT_ADMIN_ROLE()
 GET_ROLE_ADMIN_SIG = "0x248a9ca3"  # getRoleAdmin(bytes32)
 HAS_ROLE_SIG = "0x91d14854"  # hasRole(bytes32,address)
+PAUSED_SIG = "0x5c975abb"  # paused() -> bool (OpenZeppelin Pausable)
+GUARDIAN_SIG = "0x452a9320"  # guardian() -> address
+BEACON_IMPL_SIG = "0x5c60da1b"  # implementation() -> address (UpgradeableBeacon)
+
+# Substrings that mark a function as an emergency / kill / access-control switch.
+# Curated to catch the levers a privileged holder would pull to stop an active
+# incident, without dragging in unrelated business logic ("unlock" staking etc.).
+_EMERGENCY_FN_KEYWORDS = (
+    "pause", "unpause", "freeze", "unfreeze", "shutdown", "halt",
+    "emergency", "guardian", "kill", "setpaused", "togglepause",
+    "disabledeposit", "disablewithdraw", "stopmint", "blacklist",
+    "revokerole", "renounceownership", "transferownership",
+    "grantrole", "upgradeto", "setimplementation", "sweep",
+)
 SUPPORTS_INTERFACE_SIG = "0x01ffc9a7"  # supportsInterface(bytes4)
 
 # Proxy storage slots
@@ -76,6 +90,7 @@ def classify_address(address: str, rpc: RPCClient | None = None,
         "is_proxy": False,
         "proxy_type": None,
         "implementation": None,
+        "beacon": None,
         "is_verified": False,
         "labels": [],
         "known_entity": None,
@@ -84,6 +99,7 @@ def classify_address(address: str, rpc: RPCClient | None = None,
         "lp_info": None,
         "creation_tx": None,
         "balance_wei": None,
+        "emergency_controls": None,
         "checks_performed": [],
     }
 
@@ -128,6 +144,13 @@ def classify_address(address: str, rpc: RPCClient | None = None,
         _check_verified_and_proxy(result, address, explorer)
         checks.append(f"verified: {result['is_verified']}")
         _check_creation(result, address, explorer)
+        _check_emergency_controls(result, address, rpc, explorer)
+        if result.get("emergency_controls"):
+            ec = result["emergency_controls"]
+            checks.append(
+                f"emergency_controls: {len(ec.get('functions', []))} fn(s), "
+                f"paused={ec.get('paused')}"
+            )
     else:
         checks.append("verified/creation: SKIPPED (no explorer)")
 
@@ -215,9 +238,21 @@ def _check_proxy_all(result: dict, address: str, rpc: RPCClient, code: str):
     try:
         beacon_raw = rpc.get_storage_at(address, EIP1967_BEACON_SLOT)
         if _is_nonzero_address(beacon_raw):
+            beacon_addr = "0x" + beacon_raw[-40:]
             result["is_proxy"] = True
             result["proxy_type"] = "EIP-1967 beacon proxy"
-            result["implementation"] = "0x" + beacon_raw[-40:]
+            result["beacon"] = beacon_addr
+            # The slot holds the *beacon*, not the logic. Resolve one more hop via
+            # the beacon's implementation() so `implementation` is the actual code
+            # (where pause/emergency levers live); fall back to the beacon address.
+            logic = None
+            try:
+                logic_hex = rpc.eth_call({"to": beacon_addr, "data": BEACON_IMPL_SIG})
+                if logic_hex and logic_hex != "0x" and _is_nonzero_address(logic_hex):
+                    logic = "0x" + logic_hex[-40:]
+            except (RPCError, ValueError, Exception):
+                pass
+            result["implementation"] = logic or beacon_addr
             return
     except RPCError:
         pass
@@ -339,6 +374,89 @@ def _check_creation(result: dict, address: str, explorer: ExplorerClient):
             result["creation_tx"] = creation[0].get("txHash")
     except ExplorerError:
         pass
+
+
+def _check_emergency_controls(result: dict, address: str, rpc: RPCClient | None,
+                              explorer: ExplorerClient):
+    """Detect the emergency / access-control levers this contract exposes and,
+    when possible, whether it is currently paused. Serves the containment
+    question 'can this be stopped, and is the vulnerable path still live?'.
+
+    Reads the verified ABI (function *names* — robust to setPaused/togglePause
+    variants that a fixed selector list would miss) and, if RPC is available,
+    calls paused() for the live state. Additive + best-effort; never raises.
+
+    Proxies are the common case: the proxy's own ABI only exposes upgrade
+    plumbing, while the real pause/emergencyWithdraw/vulnerable entrypoints live
+    on the **implementation**. So when this contract is a proxy we also fetch and
+    scan the implementation ABI, tagging each function with its `source`."""
+    ec: dict = {}
+    fns: list[dict] = []
+    abi_sources: list[str] = []
+
+    # The proxy's own ABI, then the implementation's (where the logic lives), and
+    # for a beacon proxy also the beacon itself (its upgradeTo is a containment
+    # lever that repoints every proxy behind it at patched logic).
+    scan_targets = [(address, "proxy" if result.get("is_proxy") else "self")]
+    impl = result.get("implementation")
+    if result.get("is_proxy") and impl and _is_nonzero_address(impl):
+        scan_targets.append((impl, "implementation"))
+    beacon = result.get("beacon")
+    if beacon and _is_nonzero_address(beacon) and beacon.lower() != (impl or "").lower():
+        scan_targets.append((beacon, "beacon"))
+
+    for target_addr, source in scan_targets:
+        try:
+            abi_json = explorer.get_abi(target_addr)
+        except (ExplorerError, Exception):
+            abi_json = None
+        if not abi_json:
+            # Unverified / unreadable ABI. For the implementation this is
+            # actionable: the levers exist but we can't enumerate them.
+            if source == "implementation":
+                ec["implementation_abi_unverified"] = True
+            continue
+        try:
+            abi = json.loads(abi_json)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        abi_sources.append(f"{source}:{target_addr.lower()}")
+        for item in abi:
+            if item.get("type") != "function":
+                continue
+            name = item.get("name", "")
+            low = name.lower()
+            if any(kw in low for kw in _EMERGENCY_FN_KEYWORDS):
+                fns.append({
+                    "name": name,
+                    "inputs": [i.get("type", "") for i in item.get("inputs", [])],
+                    "stateMutability": item.get("stateMutability", ""),
+                    "source": source,
+                })
+
+    if fns:
+        ec["functions"] = fns
+    if abi_sources:
+        ec["abi_sources"] = abi_sources
+
+    # Live paused() state — call on `address` (resolves through delegatecall for
+    # a proxy). Only meaningful when the switch exists.
+    if rpc:
+        try:
+            paused_hex = rpc.eth_call({"to": address, "data": PAUSED_SIG})
+            if paused_hex and paused_hex != "0x":
+                ec["paused"] = int(paused_hex, 16) != 0
+        except (RPCError, ValueError, Exception):
+            pass
+        try:
+            guardian_hex = rpc.eth_call({"to": address, "data": GUARDIAN_SIG})
+            if guardian_hex and guardian_hex != "0x" and _is_nonzero_address(guardian_hex):
+                ec["guardian"] = "0x" + guardian_hex[-40:]
+        except (RPCError, ValueError, Exception):
+            pass
+
+    if ec:
+        result["emergency_controls"] = ec
 
 
 def _check_balance(result: dict, address: str, explorer: ExplorerClient | None):
