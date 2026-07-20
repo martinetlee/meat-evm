@@ -20,10 +20,19 @@ class ChainConfig:
     url_patterns: list[str] = field(default_factory=list)
     trace_method: str | None = None
     trace_fallback: str | None = None
+    alchemy_network: str | None = None
 
     @property
     def rpc_url(self) -> str | None:
-        return os.environ.get(self.rpc_env)
+        explicit_url = os.environ.get(self.rpc_env)
+        if explicit_url is not None and explicit_url.strip():
+            return explicit_url.strip()
+
+        alchemy_key = os.environ.get("ALCHEMY_API_KEY")
+        if self.alchemy_network and alchemy_key is not None and alchemy_key.strip():
+            return f"https://{self.alchemy_network}.g.alchemy.com/v2/{alchemy_key.strip()}"
+
+        return None
 
     @property
     def explorer_api_key(self) -> str | None:

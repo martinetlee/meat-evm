@@ -35,8 +35,7 @@ pip install -r requirements.txt
 
 # 2. Configure API keys
 cp .env.example .env
-# Edit .env — at minimum, add ETHERSCAN_API_KEY
-# For best experience, add an Alchemy RPC URL (free tier works)
+# Edit .env — add ETHERSCAN_API_KEY and ALCHEMY_API_KEY
 
 # 3. Run your first analysis
 source .venv/bin/activate
@@ -48,12 +47,15 @@ python3 -m meat quick <tx_hash_or_explorer_url> --chain ethereum
 ETHERSCAN_API_KEY=your_key_here
 ```
 
-### Recommended config (full capabilities)
+### Recommended config (full capabilities on every configured chain)
 ```env
 ETHERSCAN_API_KEY=your_key_here
-ETH_RPC_URL=https://eth-mainnet.g.alchemy.com/v2/your_key
-POLYGON_RPC_URL=https://polygon-mainnet.g.alchemy.com/v2/your_key
+ALCHEMY_API_KEY=your_key_here
 ```
+
+The Alchemy key is used to derive the correct RPC URL for each chain. Explicit
+per-chain variables such as `ETH_RPC_URL` or `ARBITRUM_RPC_URL` take precedence,
+so other providers and separate Alchemy apps remain supported.
 
 ### Investigation workflow
 ```bash
@@ -277,7 +279,7 @@ Set `MEAT_CHAIN` and `MEAT_CASE` env vars to skip `--chain` and `--case` flags.
 
 | Provider | Auto-detected | What it enables |
 |----------|--------------|-----------------|
-| **Alchemy RPC** | URL contains `alchemy.com` | `getAssetTransfers` (fast fund tracing), `getTokenBalances` (full token snapshot), `debug_traceTransaction` (call traces) |
+| **Alchemy RPC** | `ALCHEMY_API_KEY` or URL contains `alchemy.com` | `getAssetTransfers` (fast fund tracing), `getTokenBalances` (full token snapshot), `debug_traceTransaction` (call traces) |
 | **Tenderly** | `TENDERLY_ACCESS_KEY` set | Decoded call traces with state diffs as calltrace fallback |
 | **DeFiLlama** | Always (free, no auth) | USD prices in net_flows via historical price API |
 | **Sourcify** | Always (free, no auth) | 4.7M function signatures + contract source fallback |

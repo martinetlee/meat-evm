@@ -6,7 +6,7 @@ EVM exploit analysis toolkit. Python CLI for data fetching/decoding + Claude ski
 ## Quick start
 ```
 source .venv/bin/activate
-cp .env.example .env  # add your RPC URLs and explorer API keys
+cp .env.example .env  # add ETHERSCAN_API_KEY and ALCHEMY_API_KEY
 pip install -r requirements.txt
 ```
 
@@ -68,7 +68,8 @@ Each analysis writes to `cases/<case-name>/`. Evidence (raw on-chain data) in `e
 On-chain data is immutable — evidence files are write-once, never modified.
 
 ## Chains
-Configured in `chains.yaml`. Uses Etherscan V2 API (`chainid` parameter). RPC URLs and API keys come from `.env`.
+Configured in `chains.yaml`. Uses Etherscan V2 API (`chainid` parameter). A shared `ALCHEMY_API_KEY`
+derives the RPC URL for each configured chain; explicit per-chain `*_RPC_URL` values override it.
 
 ## Enhanced providers
 - **Alchemy RPC** — auto-detected from URL. Enables: `alchemy_getAssetTransfers` (faster fund tracing), `alchemy_getTokenBalances` (full token balance snapshot), `debug_traceTransaction` (call traces).
