@@ -2,6 +2,7 @@ chains:
   ethereum:
     chain_id: 1
     rpc_env: ETH_RPC_URL
+    alchemy_network: eth-mainnet
     explorer_api_env: ETHERSCAN_API_KEY
     explorer_base: "https://api.etherscan.io/v2/api"
     explorer_url: "https://etherscan.io"
@@ -14,6 +15,7 @@ chains:
   polygon:
     chain_id: 137
     rpc_env: POLYGON_RPC_URL
+    alchemy_network: polygon-mainnet
     explorer_api_env: POLYGONSCAN_API_KEY
     explorer_base: "https://api.etherscan.io/v2/api"
     explorer_url: "https://polygonscan.com"
@@ -26,6 +28,7 @@ chains:
   base:
     chain_id: 8453
     rpc_env: BASE_RPC_URL
+    alchemy_network: base-mainnet
     explorer_api_env: BASESCAN_API_KEY
     explorer_base: "https://api.etherscan.io/v2/api"
     explorer_url: "https://basescan.org"
@@ -38,6 +41,7 @@ chains:
   arbitrum:
     chain_id: 42161
     rpc_env: ARBITRUM_RPC_URL
+    alchemy_network: arb-mainnet
     explorer_api_env: ARBISCAN_API_KEY
     explorer_base: "https://api.etherscan.io/v2/api"
     explorer_url: "https://arbiscan.io"
@@ -50,6 +54,7 @@ chains:
   bsc:
     chain_id: 56
     rpc_env: BSC_RPC_URL
+    alchemy_network: bnb-mainnet
     explorer_api_env: BSCSCAN_API_KEY
     explorer_base: "https://api.etherscan.io/v2/api"
     explorer_url: "https://bscscan.com"
@@ -62,6 +67,7 @@ chains:
   optimism:
     chain_id: 10
     rpc_env: OPTIMISM_RPC_URL
+    alchemy_network: opt-mainnet
     explorer_api_env: OPTIMISTIC_ETHERSCAN_API_KEY
     explorer_base: "https://api.etherscan.io/v2/api"
     explorer_url: "https://optimistic.etherscan.io"
