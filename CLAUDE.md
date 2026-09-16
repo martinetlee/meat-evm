@@ -56,7 +56,27 @@ The gate also emits **warnings** (don't fail the build, but surface skipped work
 registry or setting `label_source`), `victim_set_consistency` (summary counts / `loss_by_vault` don't
 reconcile with labeled roles), and `suspect_token_price` (DeFiLlama priced a USD-named non-canonical
 token far off $1 — stale for impaired/collapsed tokens like xUSD; never trust its `usd_value`).
-A Stop hook runs `check` automatically. Set `eth_price_usd` in case.json to value ETH/WETH too.
+`check` runs in two tiers. The **offline** tier validates the post-mortem you wrote (the invariants
+above, plus `token_conservation`: every token's deltas inside a decisive tx must sum to zero, which
+catches a broken flow table before any figure derived from it reaches a report). The **live** tier
+validates that the post-mortem is still true, and is the half that catches an incident you have
+called contained while it is still running:
+- `incident_liveness` — nothing on the exploit path has emitted an event, and no victim balance has
+  fallen, since the newest block in your evidence. **A still-running exploit fails the gate.**
+- `net_of_debt` — a watched address holding `variableDebt*`/`stableDebt*` is leveraged, so its gross
+  holdings are not value at risk. Report collateral, debt and net equity separately.
+- `drain_completeness` — the victim's real balance delta across the incident window must match what
+  your decisive txs account for. An incomplete tx set cannot pass silently.
+
+The live tier watches `attacker`/`victim` labels plus `monitored_addresses` from case.json — put an
+exposed-but-not-yet-drained contract there. Tokens, registry entities and `intermediate` labels are
+excluded (shared infrastructure is busy every block and says nothing). It is wall-clock bounded
+(`--live-budget`, default 90s), degrades to a warning with no RPC, and never lets a network error
+fake either verdict. `--offline` skips it (~0.3s).
+
+Declare every decisive tx under `decisive_txs` (or `attack_txs`); `attack_tx` alone silently narrows
+the gate to one transaction. A Stop hook runs `check` automatically. Set `eth_price_usd` in case.json
+to value ETH/WETH too.
 Cross-chain (fund tracing): `btc-trace`, `btc-tx`, `thorchain` (+`--protocol maya`), `debridge`,
 `orbiter`, `intents` — deterministic Bitcoin peel-chain following (Blockstream), THORChain/Maya memo
 decode + Midgard, deBridge DLN and Orbiter order resolution, and intents/bridge registry
@@ -101,5 +121,8 @@ System (optional): cast, forge (Foundry) for PoC reproduction
 - `meat/classify.py` — Address classification (EOA/contract/token/proxy)
 - `meat/crosschain.py` — Bitcoin (Blockstream) peel-chain tracing + THORChain memo/Midgard decode
 - `meat/analysis.py` — Deterministic correctness helpers: provenance, profit resolution, and the
-  `check` invariant gate (value conservation, provenance-required, money-out-fetched). Pure + offline.
+  offline `check` invariants (value conservation, token conservation, provenance-required,
+  money-out-fetched). Pure + offline.
+- `meat/liveness.py` — The live `check` tier: incident_liveness, net_of_debt, drain_completeness.
+  Needs RPC; bounded by a wall-clock budget; never hard-fails on a network error.
 - `meat/parse.py` — Input parser (tx hash, address, URL, batch)

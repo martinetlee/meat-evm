@@ -283,18 +283,24 @@ def _suspect_usd_prices(tx_data: dict, tol: float = 0.05) -> dict[str, float]:
     return out
 
 
+_TX_RE = re.compile(r"^0x[0-9a-fA-F]{64}$")
+
+
 def _decisive_txs(case: dict) -> list[str]:
     hashes = []
     for key in ("attack_tx", "monetization_tx", "realized_profit_tx"):
         v = case.get(key)
-        if isinstance(v, str) and v.startswith("0x") and len(v) == 66:
+        if isinstance(v, str) and _TX_RE.match(v):
             hashes.append(v.lower())
-    # also accept a list under attack_txs
-    v = case.get("attack_txs")
-    if isinstance(v, list):
-        for h in v:
-            if isinstance(h, str) and h.startswith("0x") and len(h) == 66:
-                hashes.append(h.lower())
+    # Lists. `decisive_txs` is the name the skill documentation uses, so it must
+    # be honoured: silently reading only `attack_tx` shrinks the gate's scope to
+    # one transaction while the report still looks complete.
+    for key in ("attack_txs", "decisive_txs"):
+        v = case.get(key)
+        if isinstance(v, list):
+            for h in v:
+                if isinstance(h, str) and _TX_RE.match(h):
+                    hashes.append(h.lower())
     seen, out = set(), []
     for h in hashes:
         if h not in seen:
@@ -451,6 +457,38 @@ def check_case(case_dir: Path, min_usd: float = 100_000.0) -> dict:
                       f"where its funds/tokens came from before labeling.",
         })
 
+    # --- Invariant 3b: per-token conservation inside each decisive tx ------- #
+    # Pure arithmetic over net_flows: every token's deltas must sum to zero
+    # across all addresses, except at the zero address (mint/burn). A non-zero
+    # sum means the flow table itself is wrong, and every figure derived from it
+    # — including the headline "attacker gained X" — is wrong with it. This is
+    # what a WETH unwrap booked as an inflow looks like from the outside.
+    # The zero address is INCLUDED: the tool books a mint as 0x0 -> holder and a
+    # burn as holder -> 0x0, so counting it makes supply changes balance exactly.
+    # Dropping it would turn every legitimate burn into a false positive.
+    for h, data in fetched.items():
+        totals: dict[str, float] = {}
+        legs: dict[str, float] = {}
+        for addr, toks in (data.get("net_flows") or {}).items():
+            for sym, e in toks.items():
+                try:
+                    raw = float(e.get("raw", 0)) / (10 ** int(e.get("decimals", 18)))
+                except (TypeError, ValueError):
+                    continue
+                totals[sym] = totals.get(sym, 0.0) + raw
+                legs[sym] = max(legs.get(sym, 0.0), abs(raw))
+        for sym, net in totals.items():
+            scale = legs.get(sym) or 1.0
+            if abs(net) > scale * 0.01:
+                violations.append({
+                    "invariant": "token_conservation",
+                    "detail": (f"in tx {h} the {sym} flows do not sum to zero: net {net:,.6f} "
+                               f"across all non-zero addresses (largest single leg {scale:,.6f}). "
+                               f"The flow table is wrong, so any 'gained/lost X {sym}' figure "
+                               f"derived from it is wrong too. Common cause: a wrap/unwrap booked "
+                               f"as a transfer."),
+                })
+
     # --- Invariant 4 (warn): earned negatives ------------------------------- #
     blob = json.dumps(case).lower()
     negatives = ["not a vuln", "not a smart", "not a contract", "just phishing",
@@ -554,6 +592,53 @@ def check_case(case_dir: Path, min_usd: float = 100_000.0) -> dict:
                       f"— they are stale for impaired/collapsed tokens (e.g. xUSD at $1.27).",
         })
 
+    # --- inputs the live gate needs (computed here, used by cli) ------------ #
+    # Kept as data rather than run here so this module stays pure and offline.
+    accounted: dict[str, dict[str, int]] = {}
+    blocks: list[int] = []
+    for data in fetched.values():
+        b = data.get("block_number")
+        if isinstance(b, int):
+            blocks.append(b)
+        for t in (data.get("token_transfers") or []):
+            src = (t.get("from") or "").lower()
+            if _role(labeled, src) != "victim":
+                continue
+            tok = (t.get("token_address") or "").lower()
+            if not tok:
+                continue
+            try:
+                amt = int(t.get("amount_raw") or 0)
+            except (TypeError, ValueError):
+                continue
+            accounted.setdefault(src, {}).setdefault(tok, 0)
+            accounted[src][tok] += amt
+
+    # What must be QUIET for the incident to be over.
+    #
+    # Deliberately NOT "every labeled address": shared infrastructure (WETH,
+    # USDC, a DEX router, a lending pool) emits events every block, so watching
+    # it says nothing about this incident and makes the sweep pathologically
+    # expensive. `intermediate` is exactly the role such infrastructure carries.
+    #
+    # So: the parties (attacker, victim) plus whatever the analyst explicitly
+    # put in `monitored_addresses` — which is where a contract that is exposed
+    # but not yet drained belongs. Tokens and registry-known entities are
+    # dropped even then, as a backstop against a mislabel.
+    watch_roles = {"attacker", "victim"}
+    candidates = [a for a, i in labeled.items() if i.get("role") in watch_roles]
+    for a in (case.get("monitored_addresses") or []):
+        if isinstance(a, str) and a.startswith("0x"):
+            candidates.append(a.lower())
+    exploit_path = []
+    for a in dict.fromkeys(candidates):
+        if a in registry:
+            continue
+        ce = _load_envelope(classify_dir / f"{a}.json") if classify_dir.exists() else None
+        if ce and (ce.get("is_token") or ce.get("known_entity")):
+            continue
+        exploit_path.append(a)
+
     return {
         "passed": len(violations) == 0,
         "case": case.get("name"),
@@ -564,4 +649,10 @@ def check_case(case_dir: Path, min_usd: float = 100_000.0) -> dict:
         "counts": {"violations": len(violations), "warnings": len(warnings)},
         "violations": violations,
         "warnings": warnings,
+        "_live_inputs": {
+            "accounted": accounted,
+            "exploit_path": exploit_path,
+            "first_block": min(blocks) if blocks else None,
+            "last_block": max(blocks) if blocks else None,
+        },
     }

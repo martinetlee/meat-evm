@@ -196,6 +196,21 @@ address, or set `provenance_waived: true` with a reason) — don't ignore it.
 
 **Critical**: Label ALL addresses from `token_transfers` and the call trace, not just attacker/victim. The report uses these labels for the sequence diagram and flow graph.
 
+## READING RULES
+
+10. **Unverified contract in the exploit path? Read its bytecode before asserting what it does.**
+    Inferring behaviour from "the attack succeeded" is not evidence of mechanism — it cannot
+    distinguish *no check* from *a check with a bypass*, and that distinction is usually where the
+    cheap fix lives. Disassemble, find the dispatch, read the branch.
+11. **A failed experiment is evidence about your instrument first.** If you cannot reproduce an
+    on-chain commitment (a Merkle root, a hash, a balance), you do not yet understand the format.
+    Say so. Do not fall back on a correlation and present it as a finding.
+12. **Measure the victim, not the attacker.** "How much left" is a balance delta on the victim across
+    the window, not a sum of the attacker's transactions. "How many contracts are affected" is a
+    configuration-event replay, not a list of the ones you saw used. "Is it over" is activity since
+    your newest evidence, not a config read.
+13. **Gross holdings are not value at risk.** Check the liability side before quoting a number.
+
 ## CORRECTNESS RULES
 
 1. **Never claim without evidence.** Every statement must reference specific data from CLI output.

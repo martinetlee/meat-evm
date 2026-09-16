@@ -516,7 +516,7 @@ def _compute_net_flows(events: dict, token_info_map: dict[str, dict],
     raw_flows: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
     token_addrs_seen: dict[str, str] = {}
 
-    for t in events["transfers"] + events["weth"]:
+    for t in events["transfers"]:
         token_addr = t.get("token_address", "").lower()
         label, _ = label_map.get(token_addr, (f"UNKNOWN({token_addr[:10]}...)", 18))
         token_addrs_seen[label] = token_addr
@@ -526,6 +526,35 @@ def _compute_net_flows(events: dict, token_info_map: dict[str, dict],
             continue
         raw_flows[t["from"]][label] -= val
         raw_flows[t["to"]][label] += val
+
+    # WETH Deposit/Withdrawal are NOT ERC20 Transfers (canonical WETH9 emits no
+    # Transfer for wrap/unwrap), so they must be booked as a two-legged swap
+    # between the wrapped token and the native asset. Folding them into the
+    # transfer loop above double-counted the wrapped leg with the wrong sign —
+    # an unwrap looked like a second WETH inflow instead of a WETH outflow.
+    native = chain_cfg.native_token
+    for t in events["weth"]:
+        token_addr = t.get("token_address", "").lower()
+        label, _ = label_map.get(token_addr, (f"UNKNOWN({token_addr[:10]}...)", 18))
+        token_addrs_seen[label] = token_addr
+        try:
+            val = int(t["amount_raw"])
+        except (ValueError, TypeError):
+            continue
+        if t.get("type") == "weth_deposit":
+            holder, wrapped_delta = t.get("from", ""), val
+        elif t.get("type") == "weth_withdrawal":
+            holder, wrapped_delta = t.get("to", ""), -val
+        else:
+            continue
+        raw_flows[holder][label] += wrapped_delta
+        raw_flows[holder][native] -= wrapped_delta
+        # Mirror BOTH legs on the wrapper, which is the actual counterparty: it
+        # issues/retires the wrapped token and holds the native side. Without
+        # the wrapped mirror an unwrap looks like supply vanishing, and the
+        # token_conservation invariant rightly flags the table as broken.
+        raw_flows[token_addr][label] -= wrapped_delta
+        raw_flows[token_addr][native] += wrapped_delta
 
     if value_wei > 0:
         raw_flows[tx_data.get("from", "")][chain_cfg.native_token] -= value_wei
@@ -2186,8 +2215,20 @@ def profit(initiator, block, before, after, start_block_opt, end_block_opt, top,
 @click.argument("case_name", required=False)
 @click.option("--min-usd", default=100000.0, help="Net stablecoin swing that must be labeled (default 100k)")
 @click.option("--strict", is_flag=True, help="Exit non-zero on warnings too")
-def check(case_name, min_usd, strict):
+@click.option("--offline", is_flag=True, help="Skip the live on-chain invariants")
+@click.option("--live-budget", default=90.0, help="Wall-clock seconds for the live tier (default 90)")
+def check(case_name, min_usd, strict, offline, live_budget):
     """Gate a case against correctness invariants before findings are 'done'.
+
+    Offline tier (validates the post-mortem): money-out txs fetched in full,
+    value conservation, per-token conservation inside each decisive tx,
+    provenance recorded for attacker/victim labels, earned negatives.
+
+    Live tier (validates that it is still true): incident_liveness — nothing on
+    the exploit path has moved since your newest evidence; net_of_debt — a
+    watched address holding debt tokens is leveraged, so gross holdings are not
+    value at risk; drain_completeness — the victim's real balance delta matches
+    what your decisive txs account for.
 
     Enforces: money-out txs fetched in full, value conservation (every large net
     stablecoin winner/loser is labeled; attacker gains matched by labeled
@@ -2205,6 +2246,38 @@ def check(case_name, min_usd, strict):
         _error(f"Case '{case_name}' not found at {case_dir}")
 
     report = analysis.check_case(case_dir, min_usd=min_usd)
+
+    # Live tier. The offline invariants above validate the post-mortem; these
+    # ask whether it is still true. Skipped only with --offline, and a network
+    # failure downgrades to a warning rather than faking either verdict.
+    live_inputs = report.pop("_live_inputs", {}) or {}
+    if not offline:
+        from meat import liveness
+        case_json = json.loads((case_dir / "case.json").read_text())
+        chain_cfg = _get_chain_config(case_json.get("chain"))
+        addr_file = case_dir / "addresses.json"
+        labeled = {}
+        if addr_file.exists():
+            try:
+                labeled = {k.lower(): v for k, v in json.loads(addr_file.read_text()).items()}
+            except json.JSONDecodeError:
+                pass
+        lv, lw = liveness.live_checks(
+            _get_rpc(chain_cfg),
+            labeled,
+            live_inputs.get("exploit_path") or [],
+            live_inputs.get("accounted") or {},
+            live_inputs.get("first_block"),
+            live_inputs.get("last_block"),
+            budget_s=live_budget,
+        )
+        report["violations"] += lv
+        report["warnings"] += lw
+        report["passed"] = len(report["violations"]) == 0
+        report["counts"] = {"violations": len(report["violations"]),
+                            "warnings": len(report["warnings"])}
+    report["live_checks"] = "skipped (--offline)" if offline else "ran"
+
     _output(report)
 
     failed = not report["passed"] or (strict and report["warnings"])

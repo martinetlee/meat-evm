@@ -105,7 +105,9 @@
     "0xf70da97812cb96acdf810712aa562db8dfa3dbef": "Relay: Solver (relay.link; instant cross-chain)",
     "0x6000da47483062a0d734ba3dc7576ce6a0b645c4": "UniswapX: ExclusiveDutchOrderReactor V1",
     "0x00000011f84b9aa48e5f8aa8b9897600006289be": "UniswapX: DutchOrderReactor V2",
-    "0xa88800cd213da5ae406ce248380802bd53b47647": "1inch: Fusion Settlement"
+    "0xa88800cd213da5ae406ce248380802bd53b47647": "1inch: Fusion Settlement",
+    "0x4cd00e387622c35bddb9b4c962c136462338bc31": "Relay: settlement/deposit endpoint (relay.link). 169-235 distinct senders, zero outflows; top funder is the labelled Relay solver 0xf70da97812cb96acdf810712aa562db8dfa3dbef on both ethereum and arbitrum.",
+    "0x77accd23cc3ccc5e36a543cedcd03764bf6ad401": "Cross-chain solver settlement contract (unbranded). Delivered 36,724.77 USDC to a Filecoin exploiter on ethereum 2026-09-06; 20 distinct solver senders, zero outflows."
   },
   "no_kyc_swap": {
     "0xf1da173228fcf015f43f3ea15abbb51f0d8f1123": "eXch: Hot wallet (no-KYC; OPAQUE \u2014 no API, infra seized 2025; STOP HONESTLY here)",
@@ -117,7 +119,7 @@
     "0xcdd37ada79f589c15bd4f8fd2083dc88e34a2af2": "SideShift: Hot Wallet (no-KYC; PUBLIC status API sideshift.ai/api/v2/shifts/{id})"
   },
   "defi_infra": {
-    "_note": "Canonical mainnet DeFi infrastructure. These are liquidity/settlement venues, NOT counterparties: a transfer FROM one is a swap/withdraw, not a 'distribution'. Grow this list — a null known_entity must NOT be upgraded to a specific protocol label by guesswork.",
+    "_note": "Canonical mainnet DeFi infrastructure. These are liquidity/settlement venues, NOT counterparties: a transfer FROM one is a swap/withdraw, not a 'distribution'. Grow this list \u2014 a null known_entity must NOT be upgraded to a specific protocol label by guesswork.",
     "0xba1333333333a1ba1108e8412f11850a5c319ba9": "Balancer V3: Vault (swap/settlement singleton; a transfer out = a swap, not a seed/airdrop)",
     "0xbbbbbbbbbb9cc5e90e3b3af64bdaf62c37eeffcb": "Morpho Blue (lending + flash-loan singleton)",
     "0xf6e72db5454dd049d0788e411b06cfaf16853042": "MakerDAO: DssLitePsm (USDC PSM; DAI<->USDC 1:1)",

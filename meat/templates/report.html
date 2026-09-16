@@ -275,7 +275,7 @@ function shortAddr(addr) {
 }
 
 function addrEl(addr, explorerUrl) {
-  if (!addr) return el('span', {text: '—'});
+  if (!addr) return el('span', {text: '-'});
   const url = explorerUrl ? `${explorerUrl}/address/${addr}` : '#';
   const container = el('span', {class: 'addr'});
   container.appendChild(el('a', {href: url, target: '_blank', text: shortAddr(addr), title: addr}));
@@ -287,7 +287,7 @@ function addrEl(addr, explorerUrl) {
 }
 
 function txLink(hash, explorerUrl) {
-  if (!hash) return el('span', {text: '—'});
+  if (!hash) return el('span', {text: '-'});
   const url = explorerUrl ? `${explorerUrl}/tx/${hash}` : '#';
   return el('a', {href: url, target: '_blank', text: shortAddr(hash), title: hash});
 }
@@ -295,7 +295,7 @@ function txLink(hash, explorerUrl) {
 function badge(text, type) { return el('span', {class: `badge badge-${type}`, text: text}); }
 
 function fmtNum(n) {
-  if (n === null || n === undefined) return '—';
+  if (n === null || n === undefined) return '-';
   const num = typeof n === 'string' ? parseFloat(n) : n;
   if (isNaN(num)) return n;
   return num.toLocaleString('en-US', {maximumFractionDigits: 2});
@@ -482,11 +482,15 @@ function verdictBanner(summary) {
   banner.appendChild(el('span', {class: 'verdict-icon', text: ongoing ? '⚠' : '✓'}));
   const txt = el('div');
   txt.appendChild(el('div', {class: 'verdict-label',
-    text: ongoing ? 'ONGOING — active incident' : 'CONTAINED'}));
-  const risk = summary.at_risk_usd ? ` — ${summary.at_risk_usd} still reachable` : '';
+    text: ongoing ? 'ONGOING: active incident' : 'CONTAINED'}));
+  // `at_risk_usd` reads differently either side of the verdict: when ongoing it is still
+  // reachable, when contained it is what the containment measures are holding back. Appending
+  // one shared "still reachable" suffix to both made the contained banner contradict itself
+  // ("No further on-chain losses reachable, $X still reachable").
+  const amt = summary.at_risk_usd;
   txt.appendChild(el('div', {class: 'verdict-sub', text: ongoing
-    ? `Funds remain exploitable${risk}. See the Containment tab for which address must send which transaction to stop further losses.`
-    : `No further on-chain losses reachable${risk}. See the Containment tab for the evidence.`}));
+    ? `Funds remain exploitable${amt ? `, ${amt} still reachable` : ''}. See the Containment tab for which address must send which transaction to stop further losses.`
+    : `No further on-chain losses reachable right now${amt ? `, ${amt} sits behind the containment measures` : ''}. See the Containment tab for what still has to be fixed.`}));
   banner.appendChild(txt);
   return banner;
 }
@@ -524,7 +528,7 @@ hm.appendChild(badge(C.status, C.status === 'active' ? 'yellow' : 'green'));
   const stolenEntries = Object.entries(stolen);
   const totalUsd = summary.total_stolen_usd || (stolenEntries.length ? '' : '$0');
 
-  stats.appendChild((() => { const s = el('div', {class: 'stat-card'}); s.appendChild(el('div', {class: 'stat-label', text: 'Total Stolen'})); s.appendChild(el('div', {class: 'stat-value red', text: totalUsd || '—'})); return s; })());
+  stats.appendChild((() => { const s = el('div', {class: 'stat-card'}); s.appendChild(el('div', {class: 'stat-label', text: 'Total Stolen'})); s.appendChild(el('div', {class: 'stat-value red', text: totalUsd || '-'})); return s; })());
   stats.appendChild((() => { const s = el('div', {class: 'stat-card'}); s.appendChild(el('div', {class: 'stat-label', text: 'Recovered'})); s.appendChild(el('div', {class: 'stat-value green', text: summary.total_recovered_usd || '$0'})); return s; })());
   stats.appendChild((() => { const s = el('div', {class: 'stat-card'}); s.appendChild(el('div', {class: 'stat-label', text: 'Attack Txs'})); s.appendChild(el('div', {class: 'stat-value', text: String(summary.attack_txs || D.transactions.length || 0)})); return s; })());
   stats.appendChild((() => { const s = el('div', {class: 'stat-card'}); s.appendChild(el('div', {class: 'stat-label', text: 'Addresses'})); s.appendChild(el('div', {class: 'stat-value', text: String(Object.keys(D.addresses).length)})); return s; })());
@@ -582,8 +586,8 @@ hm.appendChild(badge(C.status, C.status === 'active' ? 'yellow' : 'green'));
       const tr = el('tr');
       const tdAddr = el('td'); tdAddr.appendChild(addrEl(addr, explorerUrl)); tr.appendChild(tdAddr);
       const tdRole = el('td'); tdRole.appendChild(roleBadge(info.role)); tr.appendChild(tdRole);
-      tr.appendChild(el('td', {text: info.confidence || '—'}));
-      tr.appendChild(el('td', {text: info.reason || '—', style: 'max-width: 400px; font-size: 12px;'}));
+      tr.appendChild(el('td', {text: info.confidence || '-'}));
+      tr.appendChild(el('td', {text: info.reason || '-', style: 'max-width: 400px; font-size: 12px;'}));
       tbody.appendChild(tr);
     });
     tbl.appendChild(tbody);
@@ -645,11 +649,11 @@ hm.appendChild(badge(C.status, C.status === 'active' ? 'yellow' : 'green'));
     const tr = el('tr');
     const tdH = el('td'); tdH.appendChild(txLink(tx.hash, explorerUrl)); tr.appendChild(tdH);
     const tdS = el('td'); tdS.appendChild(badge(tx.status || '?', tx.status === 'success' ? 'green' : 'red')); tr.appendChild(tdS);
-    tr.appendChild(el('td', {text: (tx.block_number != null ? String(tx.block_number) : '—'), style: 'white-space:nowrap;'}));
+    tr.appendChild(el('td', {text: (tx.block_number != null ? String(tx.block_number) : '-'), style: 'white-space:nowrap;'}));
     const tdF = el('td'); tdF.appendChild(addrEl(tx.from, explorerUrl)); tr.appendChild(tdF);
     const tdT = el('td'); tdT.appendChild(addrEl(tx.to, explorerUrl)); tr.appendChild(tdT);
-    tr.appendChild(el('td', {text: (tx.decoded_input && (tx.decoded_input.function || tx.decoded_input.signature)) || '—', style: 'font-family:var(--font-mono); font-size:12px;'}));
-    tr.appendChild(el('td', {text: tx.value_formatted || '—', style: 'white-space:nowrap;'}));
+    tr.appendChild(el('td', {text: (tx.decoded_input && (tx.decoded_input.function || tx.decoded_input.signature)) || '-', style: 'font-family:var(--font-mono); font-size:12px;'}));
+    tr.appendChild(el('td', {text: tx.value_formatted || '-', style: 'white-space:nowrap;'}));
     tbody.appendChild(tr);
   });
   tbl.appendChild(tbody);
@@ -673,7 +677,7 @@ hm.appendChild(badge(C.status, C.status === 'active' ? 'yellow' : 'green'));
     const co = el('div', {class: 'callout callout-yellow'});
     co.appendChild(el('div', {class: 'callout-title', text: '⚠ Cross-chain / service exit points on this path'}));
     co.appendChild(el('div', {style: 'font-size:13px; color:var(--text-dim); margin-bottom:8px;',
-      text: 'These are custody hand-offs (intents solvers / bridges / mixers), not confirmed destinations. Funds may leave the chain with no on-chain link — cross-reference the service’s off-chain order book (e.g. NEAR Intents) before concluding where they went.'}));
+      text: 'These are custody hand-offs (intents solvers / bridges / mixers), not confirmed destinations. Funds may leave the chain with no on-chain link. Cross-reference the service’s off-chain order book (e.g. NEAR Intents) before concluding where they went.'}));
     flow.exit_points.forEach(x => {
       const row = el('div', {style: 'font-size:12.5px; margin:2px 0;'});
       row.appendChild(badge(x.category, x.category === 'mixers' ? 'yellow' : (x.category === 'bridges' ? 'purple' : 'accent')));
@@ -723,6 +727,33 @@ hm.appendChild(badge(C.status, C.status === 'active' ? 'yellow' : 'green'));
   ageLabel.appendChild(ageInput);
   ageLabel.appendChild(ageUnit);
   controls.appendChild(ageLabel);
+
+  // "Named only" filter. A depth-2 flow over a DEX-routed exit produces hundreds of
+  // liquidity-pool nodes that bury the actual endpoints, which makes the default view useless
+  // for the question people actually ask: where did the funds end up. This hides every node
+  // with no label/role and any edge left dangling, leaving the named path.
+  controls.appendChild(el('span', {text: '|', style: 'color:var(--border); margin: 0 4px;'}));
+  const namedLabel = el('label', {style: 'font-size:12px; color:var(--text-dim); cursor:pointer; user-select:none;'});
+  const namedBox = el('input', {type: 'checkbox', style: 'vertical-align:-1px; margin-right:5px; cursor:pointer;'});
+  namedLabel.appendChild(namedBox);
+  namedLabel.appendChild(el('span', {text: 'Named only (hide unlabelled hops)'}));
+  controls.appendChild(namedLabel);
+  namedBox.onchange = () => {
+    if (!cy) return;
+    if (namedBox.checked) {
+      const keep = cy.nodes().filter(n => {
+        const d = n.data();
+        return !!(d.role || (d.label && d.label !== d.id && !/^0x[0-9a-fA-F]{4}\.\.\./.test(d.label)));
+      });
+      cy.nodes().difference(keep).addClass('hidden-node');
+      cy.edges().forEach(e => {
+        if (e.source().hasClass('hidden-node') || e.target().hasClass('hidden-node')) e.addClass('hidden-node');
+      });
+    } else {
+      cy.elements().removeClass('hidden-node');
+    }
+    cy.fit(cy.elements(':visible'), 30);
+  };
   container.appendChild(controls);
 
   // Cytoscape container
@@ -750,6 +781,9 @@ hm.appendChild(badge(C.status, C.status === 'active' ? 'yellow' : 'green'));
     edgeAgg[key].count++;
     if (e.op && !edgeAgg[key].op) edgeAgg[key].op = e.op;
   });
+
+  // Hidden-node style used by the "Named only" filter
+  const HIDDEN_STYLE = { selector: '.hidden-node', style: { 'display': 'none' } };
 
   // Role → color map
   const roleColors = {
@@ -858,6 +892,7 @@ hm.appendChild(badge(C.status, C.status === 'active' ? 'yellow' : 'green'));
     container: cyDiv,
     elements: [...cyNodes, ...cyEdges],
     style: [
+      HIDDEN_STYLE,
       {
         selector: 'node',
         style: {
@@ -1163,7 +1198,7 @@ hm.appendChild(badge(C.status, C.status === 'active' ? 'yellow' : 'green'));
       const tr = el('tr');
       tr.appendChild(el('td', {text: r.category}));
       tr.appendChild(el('td', {text: r.label}));
-      tr.appendChild(el('td', {text: r.amount_usd || '—'}));
+      tr.appendChild(el('td', {text: r.amount_usd || '-'}));
       const tdS = el('td'); tdS.appendChild(badge(r.status || 'unknown', r.status === 'potentially_recoverable' ? 'green' : 'yellow')); tr.appendChild(tdS);
       rtbody.appendChild(tr);
     });
@@ -1172,8 +1207,8 @@ hm.appendChild(badge(C.status, C.status === 'active' ? 'yellow' : 'green'));
   }
 
   // Fund-tracing write-ups rendered inline on this tab
-  [['fund-trace', 'Fund Trace — where the funds went'],
-   ['fund-source', 'Funding Source — how the attacker was funded']].forEach(([key, title]) => {
+  [['fund-trace', 'Fund trace: where the funds went'],
+   ['fund-source', 'Funding source: how the attacker was funded']].forEach(([key, title]) => {
     const md = (D.findings || {})[key];
     if (md) {
       container.appendChild(el('div', {class: 'section-title', text: title, style: 'margin-top: 32px;'}));
@@ -1195,7 +1230,7 @@ hm.appendChild(badge(C.status, C.status === 'active' ? 'yellow' : 'green'));
         tr.appendChild(el('td', {text: fmtWei(e.value, tokenDecimals[(e.token||'').toUpperCase()] || 18)}));
         tr.appendChild(el('td', {text: e.token || '?'}));
         const tdTx = el('td'); tdTx.appendChild(txLink(e.tx_hash, explorerUrl)); tr.appendChild(tdTx);
-        tr.appendChild(el('td', {text: e.timestamp ? e.timestamp.replace('T', ' ').slice(0, 19) : '—', style: 'white-space: nowrap; font-size: 11px;'}));
+        tr.appendChild(el('td', {text: e.timestamp ? e.timestamp.replace('T', ' ').slice(0, 19) : '-', style: 'white-space: nowrap; font-size: 11px;'}));
         tbody.appendChild(tr);
       });
       tbl.appendChild(tbody);
@@ -1215,7 +1250,7 @@ hm.appendChild(badge(C.status, C.status === 'active' ? 'yellow' : 'green'));
 
   const nameOf = (info) => {
     const k = info.classify && info.classify.known_entity;
-    return (info.labels && info.labels[0]) || (typeof k === 'object' ? (k && k.label) : k) || '—';
+    return (info.labels && info.labels[0]) || (typeof k === 'object' ? (k && k.label) : k) || '-';
   };
   container.appendChild(el('div', {class: 'section-title', text: `Addresses (${entries.length})`}));
   const tbl = el('table');
@@ -1227,9 +1262,9 @@ hm.appendChild(badge(C.status, C.status === 'active' ? 'yellow' : 'green'));
     const tdA = el('td'); tdA.appendChild(addrEl(addr, explorerUrl)); tr.appendChild(tdA);
     const tdR = el('td'); tdR.appendChild(roleBadge(info.role)); tr.appendChild(tdR);
     tr.appendChild(el('td', {text: nameOf(info)}));
-    tr.appendChild(el('td', {text: c.type || '—'}));
-    tr.appendChild(el('td', {text: c.balance_formatted || '—', style: 'white-space:nowrap;'}));
-    tr.appendChild(el('td', {text: info.reason || '—', style: 'font-size:12px; color:var(--text-dim); max-width:380px;'}));
+    tr.appendChild(el('td', {text: c.type || '-'}));
+    tr.appendChild(el('td', {text: c.balance_formatted || '-', style: 'white-space:nowrap;'}));
+    tr.appendChild(el('td', {text: info.reason || '-', style: 'font-size:12px; color:var(--text-dim); max-width:380px;'}));
     tbody.appendChild(tr);
   });
   tbl.appendChild(tbody);
@@ -1288,7 +1323,7 @@ hm.appendChild(badge(C.status, C.status === 'active' ? 'yellow' : 'green'));
       const tr = el('tr');
       const addr = c.address || '';
       const tdAddr = el('td'); tdAddr.appendChild(addrEl(addr.replace(/`/g,''), explorerUrl)); tr.appendChild(tdAddr);
-      tr.appendChild(el('td', {text: c.name || '—'}));
+      tr.appendChild(el('td', {text: c.name || '-'}));
       const role = c.role || '';
       const roleColor = role.toLowerCase().includes('attacker') ? 'var(--red)' : role.toLowerCase().includes('victim') ? 'var(--blue)' : 'var(--text-dim)';
       tr.appendChild(el('td', {text: role, style: `color: ${roleColor};`}));
@@ -1793,9 +1828,9 @@ hm.appendChild(badge(C.status, C.status === 'active' ? 'yellow' : 'green'));
     const tr = el('tr');
     tr.appendChild(el('td', {text: item.category}));
     tr.appendChild(el('td', {text: shortAddr(item.key), title: item.key, style: 'font-family: var(--font-mono); font-size: 12px;'}));
-    tr.appendChild(el('td', {text: item.chain || '—'}));
-    tr.appendChild(el('td', {text: item.fetched_at ? item.fetched_at.replace('T', ' ').slice(0, 19) : '—', style: 'font-size: 12px; white-space: nowrap;'}));
-    tr.appendChild(el('td', {text: item.size_bytes ? `${(item.size_bytes / 1024).toFixed(1)} KB` : '—'}));
+    tr.appendChild(el('td', {text: item.chain || '-'}));
+    tr.appendChild(el('td', {text: item.fetched_at ? item.fetched_at.replace('T', ' ').slice(0, 19) : '-', style: 'font-size: 12px; white-space: nowrap;'}));
+    tr.appendChild(el('td', {text: item.size_bytes ? `${(item.size_bytes / 1024).toFixed(1)} KB` : '-'}));
     tbody.appendChild(tr);
   });
   tbl.appendChild(tbody);
@@ -1815,7 +1850,7 @@ hm.appendChild(badge(C.status, C.status === 'active' ? 'yellow' : 'green'));
   grid.appendChild(el('span', {text: 'Categories:', style: 'color: var(--text-dim);'}));
   grid.appendChild(el('span', {text: Object.entries(categories).map(([k, v]) => `${k} (${v})`).join(', ')}));
   grid.appendChild(el('span', {text: 'Chains:', style: 'color: var(--text-dim);'}));
-  grid.appendChild(el('span', {text: Array.from(sources).join(', ') || '—'}));
+  grid.appendChild(el('span', {text: Array.from(sources).join(', ') || '-'}));
   card.appendChild(grid);
   container.appendChild(card);
 })();
@@ -1836,7 +1871,7 @@ hm.appendChild(badge(C.status, C.status === 'active' ? 'yellow' : 'green'));
   // Case meta
   const metaCard = el('div', {class: 'card', style: 'margin-bottom: 20px;'});
   const grid = el('div', {style: 'display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 13px;'});
-  const addRow = (l, v) => { grid.appendChild(el('span', {text: l, style: 'color: var(--text-dim);'})); grid.appendChild(el('span', {text: v || '—'})); };
+  const addRow = (l, v) => { grid.appendChild(el('span', {text: l, style: 'color: var(--text-dim);'})); grid.appendChild(el('span', {text: v || '-'})); };
   addRow('Created:', C.created);
   addRow('Last Updated:', C.last_updated);
   addRow('Last Monitored:', C.last_monitored);
@@ -1864,8 +1899,8 @@ hm.appendChild(badge(C.status, C.status === 'active' ? 'yellow' : 'green'));
     monitored.forEach(m => {
       const tr = el('tr');
       const td = el('td'); td.appendChild(addrEl(m.address, explorerUrl)); tr.appendChild(td);
-      tr.appendChild(el('td', {text: m.role || '—'}));
-      tr.appendChild(el('td', {text: String(m.last_tx_block || '—')}));
+      tr.appendChild(el('td', {text: m.role || '-'}));
+      tr.appendChild(el('td', {text: String(m.last_tx_block || '-')}));
       tbody.appendChild(tr);
     });
     tbl.appendChild(tbody);
