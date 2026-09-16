@@ -77,5 +77,18 @@ chains:
     trace_method: debug_traceTransaction
     trace_fallback: cast_run
 
+  filecoin:
+    chain_id: 314
+    rpc_env: FILECOIN_RPC_URL
+    explorer_api_env: ETHERSCAN_API_KEY
+    explorer_base: "https://api.etherscan.io/v2/api"
+    explorer_url: "https://filfox.info/en"
+    native_token: FIL
+    url_patterns:
+      - "filfox.info"
+      - "filscan.io"
+    trace_method: debug_traceTransaction
+    trace_fallback: cast_run
+
 rate_limit:
   requests_per_second: 3
